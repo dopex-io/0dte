@@ -364,20 +364,4 @@ contract 0dte is Ownable, Pausable {
         price = uint256(priceOracle.getUnderlyingPrice());
     }
 
-    function checkMath() public view {
-        console.log("QUOTE");
-        console.log(quote.balanceOf(address(this)));
-        console.log("QUOTE TOTAL ASSETS");
-        console.log(quoteLp.totalAssets());
-        console.log("QUOTE TOTAL AVAILABLE ASSETS");
-        console.log(quoteLp.totalAvailableAssets());
-
-        console.log("BASE");
-        console.log(base.balanceOf(address(this)));
-        console.log("BASE TOTAL ASSETS");
-        console.log(baseLp.totalAssets());
-        console.log("BASE TOTAL AVAILABLE ASSETS");
-        console.log(baseLp.totalAvailableAssets());
-    }
-    
 }
