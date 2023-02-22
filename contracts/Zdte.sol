@@ -267,7 +267,6 @@ contract Zdte is Ownable, Pausable {
 
         // Generate zdte position NFT
         id = zdtePositionMinter.mint(msg.sender);
-        console.log("long option position: %s %s", getCurrentExpiry(), block.timestamp);
 
         zdtePositions[id] = ZdtePosition({
             isOpen: true,
@@ -320,7 +319,6 @@ contract Zdte is Ownable, Pausable {
                     zdtePositions[id].strike * zdtePositions[id].positions / 10 ** 20
                 );
             else {
-                console.log("unlock liquidity: %s", zdtePositions[id].positions);
                 baseLp.unlockLiquidity(zdtePositions[id].positions);
             }
             
