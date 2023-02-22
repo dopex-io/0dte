@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers, network } = require("hardhat");
 const { BigNumber } = ethers;
 
-describe("0dte", function() {
+describe("Zdte", function() {
   let signers;
   let owner;
 
@@ -28,7 +28,7 @@ describe("0dte", function() {
     user3 = signers[4];
   });
 
-  it("should deploy 0dte", async function() {
+  it("should deploy Zdte", async function() {
     // USDC
     usdc = await ethers.getContractAt("contracts/interface/IERC20.sol:IERC20", "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8");
     // WETH
@@ -46,17 +46,19 @@ describe("0dte", function() {
     optionPricing = await OptionPricing.deploy();
 
     // Option scalp
-    const Zdte = await ethers.getContractFactory("0dte");
+    const Zdte = await ethers.getContractFactory("Zdte");
     zdte = await Zdte.deploy(
       weth.address,
       usdc.address,
       optionPricing.address,
       volatilityOracle.address,
       priceOracle.address,
-      "0xE592427A0AEce92De3Edee1F18E0157C05861564" // UNI V3 ROUTER
+      "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3 ROUTER,
+      "5000000000", // Strike increment => 50 * 1e8,
+      "10" // Max OTM % => 10%
     );
 
-    console.log("deployed 0dte:", zdte.address);
+    console.log("deployed Zdte:", zdte.address);
   });
 
   it("distribute funds to user0, user1, user2 and user3", async function() {

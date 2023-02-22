@@ -197,14 +197,14 @@ contract Zdte is Ownable, Pausable {
                 (
                     isPut && 
                     (
-                        (strike >= markPrice - (markPrice * (100 - maxOtmPercentage))) &&
+                        (strike >= markPrice - (markPrice * (100 - maxOtmPercentage) / 100)) &&
                         strike <= markPrice
                     )
                 ) ||
                 (
                     !isPut && 
                     (
-                        (strike <= markPrice + (markPrice * (100 - maxOtmPercentage))) &&
+                        (strike <= markPrice + (markPrice * (100 - maxOtmPercentage) / 100)) &&
                         strike >= markPrice
                     )
                 )
@@ -285,7 +285,6 @@ contract Zdte is Ownable, Pausable {
         );
 
         int256 pnl = calcPnl(id);
-        uint256 markPrice = getMarkPrice();
 
         if (zdtePositions[id].isPut) {
             quoteLp.unlockLiquidity(
