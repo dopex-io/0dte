@@ -40,6 +40,10 @@ describe("Zdte", function() {
   });
 
   it("should deploy Zdte", async function() {
+    // Set timestamp
+    await network.provider.send("evm_setNextBlockTimestamp", [Math.floor(Date.now() / 1000)]);
+    await network.provider.send("evm_mine");
+
     // USDC
     usdc = await ethers.getContractAt("contracts/interface/IERC20.sol:IERC20", "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8");
     // WETH
@@ -66,7 +70,8 @@ describe("Zdte", function() {
       priceOracle.address,
       "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3 ROUTER,
       "5000000000", // Strike increment => 50 * 1e8,
-      "10" // Max OTM % => 10%
+      "10", // Max OTM % => 10%،
+      "1677139200"
     );
 
     console.log("deployed Zdte:", zdte.address);
@@ -138,6 +143,7 @@ describe("Zdte", function() {
     const quoteOut = endQuoteBalance.sub(startQuoteBalance);
     expect(quoteOut).to.eq("50000000000");
   });
+  
 
   it("user 1 opens profitable long call position", async function() {
     await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
@@ -258,6 +264,33 @@ describe("Zdte", function() {
     await expect(
       zdte.connect(user0).withdraw(false, await baseLp.balanceOf(user0.address))
     ).to.be.revertedWith("Not enough available assets to satisfy withdrawal");
+  });
+
+  it("user 1 cannot open long option position with invalid strike", async function() {
+    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
+    const startQuoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Start quote balance:', startQuoteBalance.toString());
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+    await expect(zdte.connect(user1).longOptionPosition(
+      true, 
+      "1000000000000000000",
+      "140000000000", 
+    )).to.be.revertedWith("Invalid strike"); // 1 $1400 put option - >10% away from mark price
+  });
+
+  it("user 1 cannot expire position prior to expiry", async function() {
+    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
+    const startQuoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Start quote balance:', startQuoteBalance.toString());
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+    await zdte.connect(user1).longOptionPosition(
+      true, 
+      "1000000000000000000",
+      "150000000000", 
+    ); // 1 $1500 put option
+    await expect(zdte.connect(user1).expireOptionPosition(6)).to.be.revertedWith("Position must be past expiry time");
   });
 
 });

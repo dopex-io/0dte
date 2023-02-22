@@ -57,6 +57,9 @@ contract Zdte is Ownable, Pausable {
     // Max OTM % from mark price
     uint256 public maxOtmPercentage;
 
+    // Genesis expiry timestamp, next day 8am gmt
+    uint256 public genesisExpiry;
+
     // zdte positions
     mapping(uint256 => ZdtePosition) public zdtePositions;
 
@@ -77,6 +80,8 @@ contract Zdte is Ownable, Pausable {
         int256 pnl;
         // Opened at timestamp
         uint256 openedAt;
+        // Expiry timestamp
+        uint256 expiry;
     }
 
     // Deposit event
@@ -99,7 +104,8 @@ contract Zdte is Ownable, Pausable {
         address _priceOracle,
         address _uniswapV3Router,
         uint _strikeIncrement,
-        uint _maxOtmPercentage
+        uint _maxOtmPercentage,
+        uint _genesisExpiry
     ) {
         require(_base != address(0), "Invalid base token");
         require(_quote != address(0), "Invalid quote token");
@@ -109,6 +115,7 @@ contract Zdte is Ownable, Pausable {
 
         require(_strikeIncrement > 0, "Invalid strike increment");
         require(_maxOtmPercentage > 0, "Invalid max OTM %");
+        require(_genesisExpiry > block.timestamp, "Invalid genesis expiry");
 
         base = IERC20(_base);
         quote = IERC20(_quote);
@@ -119,6 +126,7 @@ contract Zdte is Ownable, Pausable {
 
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
+        genesisExpiry= _genesisExpiry;
 
         zdtePositionMinter = new ZdtePositionMinter();
 
@@ -197,14 +205,14 @@ contract Zdte is Ownable, Pausable {
                 (
                     isPut && 
                     (
-                        (strike >= markPrice - (markPrice * (100 - maxOtmPercentage) / 100)) &&
+                        (strike >= (markPrice * (100 - maxOtmPercentage) / 100)) &&
                         strike <= markPrice
                     )
                 ) ||
                 (
                     !isPut && 
                     (
-                        (strike <= markPrice + (markPrice * (100 - maxOtmPercentage) / 100)) &&
+                        (strike <= (markPrice * (100 + maxOtmPercentage) / 100)) &&
                         strike >= markPrice
                     )
                 )
@@ -259,6 +267,7 @@ contract Zdte is Ownable, Pausable {
 
         // Generate zdte position NFT
         id = zdtePositionMinter.mint(msg.sender);
+        console.log("long option position: %s %s", getCurrentExpiry(), block.timestamp);
 
         zdtePositions[id] = ZdtePosition({
             isOpen: true,
@@ -268,7 +277,8 @@ contract Zdte is Ownable, Pausable {
             premium: premium,
             fees: openingFees,
             pnl: 0,
-            openedAt: block.timestamp
+            openedAt: block.timestamp,
+            expiry: getCurrentExpiry()
         });
 
         emit LongOptionPosition(id, amount, strike, msg.sender);
@@ -280,8 +290,8 @@ contract Zdte is Ownable, Pausable {
         require(zdtePositions[id].isOpen, "Invalid position ID");
 
         require(
-            zdtePositions[id].openedAt + 1 days <= block.timestamp,
-            "Position must be expired"
+            zdtePositions[id].expiry <= block.timestamp,
+            "Position must be past expiry time"
         );
 
         uint pnl = calcPnl(id);
@@ -392,6 +402,14 @@ contract Zdte is Ownable, Pausable {
     /// @param price Mark price
     function getMarkPrice() public view returns (uint256 price) {
         price = uint256(priceOracle.getUnderlyingPrice());
+    }
+
+    /// @notice Public function to return the next expiry timestamp
+    function getCurrentExpiry() public view returns (uint256 expiry) {
+        if (block.timestamp > genesisExpiry)
+            expiry = genesisExpiry + ((((block.timestamp - genesisExpiry) / 1 days) + 1) * 1 days);
+        else
+            expiry = genesisExpiry;
     }
 
 }
