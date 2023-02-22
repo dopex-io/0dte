@@ -4,13 +4,13 @@ pragma solidity ^0.8.9;
 import {IERC20} from "./interface/IERC20.sol";
 import {SafeERC20} from "./libraries/SafeERC20.sol";
 
-import {0dteLP} from "./token/0dteLP.sol";
+import {ZdteLP} from "./token/ZdteLP.sol";
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-import {0dtePositionMinter} from "./positions/0dtePositionMinter.sol";
+import {ZdtePositionMinter} from "./positions/ZdtePositionMinter.sol";
 
 import {Pausable} from "./helpers/Pausable.sol";
 
@@ -21,17 +21,17 @@ import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 
 import "hardhat/console.sol";
 
-contract 0dte is Ownable, Pausable {
+contract Zdte is Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // Base token
     IERC20 public base;
     // Quote token
     IERC20 public quote;
-    // 0dte Base LP token
-    0dteLP public baseLp;
-    // 0dte Quotee LP token
-    0dteLP public quoteLp;
+    // zdte Base LP token
+    ZdteLP public baseLp;
+    // zdte Quotee LP token
+    ZdteLP public quoteLp;
 
     // Option pricing
     IOptionPricing public optionPricing;
@@ -39,8 +39,8 @@ contract 0dte is Ownable, Pausable {
     IVolatilityOracle public volatilityOracle;
     // Price oracle
     IPriceOracle public priceOracle;
-    // 0dte position minter
-    0dtePositionMinter public 0dtePositionMinter;
+    // zdte position minter
+    ZdtePositionMinter public zdtePositionMinter;
     // Fee distributor
     address public feeDistributor;
     // Uniswap V3 router
@@ -57,10 +57,10 @@ contract 0dte is Ownable, Pausable {
     // Max OTM % from mark price
     uint256 public maxOtmPercentage;
 
-    // 0dte positions
-    mapping(uint256 => 0dtePosition) public 0dtePositions;
+    // zdte positions
+    mapping(uint256 => ZdtePosition) public zdtePositions;
 
-    struct 0dtePosition {
+    struct ZdtePosition {
         // Is position open
         bool isOpen;
         // Is short
@@ -120,14 +120,13 @@ contract 0dte is Ownable, Pausable {
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
 
-        0dtePositionMinter = new 0dtePositionMinter();
+        zdtePositionMinter = new ZdtePositionMinter();
 
         base.approve(address(uniswapV3Router), type(uint256).max);
         quote.approve(address(uniswapV3Router), type(uint256).max);
 
-        quoteLp = new 0dteLP(address(this), address(quote), quote.symbol());
-
-        baseLp = new 0dteLP(address(this), address(base), base.symbol());
+        quoteLp = new ZdteLP(address(this), address(quote), quote.symbol());
+        baseLp = new ZdteLP(address(this), address(base), base.symbol());
 
         quote.approve(address(quoteLp), type(uint256).max);
         base.approve(address(baseLp), type(uint256).max);
@@ -183,7 +182,7 @@ contract 0dte is Ownable, Pausable {
         emit Withdraw(isQuote, amount, msg.sender);
     }
 
-    /// @notice Buys a 0dte option
+    /// @notice Buys a zdte option
     // @param isPut is put option
     // @param amount Amount of options to long
     // @param strike Strike price
@@ -241,7 +240,7 @@ contract 0dte is Ownable, Pausable {
         // Transfer fees to fee distributor
         if (isPut) {
             quoteLp.deposit(openingFees, feeDistributor);
-            quoteLp.addProceeds(basePremium);
+            quoteLp.addProceeds(premium);
         } else {
             uint256 basePremium = _swapExactIn(
                 address(quote),
@@ -258,10 +257,10 @@ contract 0dte is Ownable, Pausable {
             baseLp.addProceeds(basePremium);
         }
 
-        // Generate 0dte position NFT
-        id = 0dtePositionMinter.mint(msg.sender);
+        // Generate zdte position NFT
+        id = zdtePositionMinter.mint(msg.sender);
 
-        0dtePositions[id] = 0dtePosition({
+        zdtePositions[id] = ZdtePosition({
             isOpen: true,
             isPut: isPut,
             positions: amount,
@@ -278,41 +277,41 @@ contract 0dte is Ownable, Pausable {
     /// @notice Expires an open option position
     /// @param id ID of position
     function expireOptionPosition(uint256 id) public {
-        require(0dtePositions[id].isOpen, "Invalid position ID");
+        require(zdtePositions[id].isOpen, "Invalid position ID");
 
         require(
-            0dtePositions[id].openedAt + 1 days <= block.timestamp,
+            zdtePositions[id].openedAt + 1 days <= block.timestamp,
             "Position must be expired"
         );
 
         int256 pnl = calcPnl(id);
         uint256 markPrice = getMarkPrice();
 
-        if (0dtePositions[id].isPut) {
+        if (zdtePositions[id].isPut) {
             quoteLp.unlockLiquidity(
-                0dtePositions[id].strike * 0dtePositions[id].positions
+                zdtePositions[id].strike * zdtePositions[id].positions
             );
             quote.transfer(
-                IERC721(0dtePositionMinter).ownerOf(id),
+                IERC721(zdtePositionMinter).ownerOf(id),
                 uint256(pnl)
             );
         } else {
-            baseLp.unlockLiquidity(0dtePositions[id].positions);
+            baseLp.unlockLiquidity(zdtePositions[id].positions);
             base.transfer(
-                IERC721(0dtePositionMinter).ownerOf(id),
+                IERC721(zdtePositionMinter).ownerOf(id),
                 uint256(pnl)
             );
         }
-        0dtePositions[id].isOpen = false;
+        zdtePositions[id].isOpen = false;
         emit ExpireOptionPosition(id, pnl, msg.sender);
     }
 
-    /// @notice Allow only 0dte LP contract to claim collateral
+    /// @notice Allow only zdte LP contract to claim collateral
     /// @param amount Amount of quote/base assets to transfer
     function claimCollateral(uint256 amount) public {
         require(
             msg.sender == address(quoteLp) || msg.sender == address(baseLp),
-            "Only 0dte LP contract can claim collateral"
+            "Only zdte LP contract can claim collateral"
         );
         if (msg.sender == address(quoteLp)) 
             quote.transfer(msg.sender, amount);
@@ -333,6 +332,7 @@ contract 0dte is Ownable, Pausable {
     /// @notice Internal function to calculate premium in quote
     /// @param strike Strike of option
     /// @param amount Amount of option
+    /// @param timeToExpiry Time to expiry in seconds
     function calcPremium(
         uint256 strike, // 1e8
         uint256 amount, // 1e18
@@ -365,15 +365,15 @@ contract 0dte is Ownable, Pausable {
     /// @return pnl PNL in quote asset i.e USD (1e6)
     function calcPnl(uint256 id) internal view returns (int256 pnl) {
         uint256 markPrice = getMarkPrice();
-        uint256 strike = 0dtePositions[id].strike;
-        if (0dtePositions[id].isPut)
-            pnl = strike > markPrice ? int256(0dtePositions[id].positions) *
+        uint256 strike = zdtePositions[id].strike;
+        if (zdtePositions[id].isPut)
+            pnl = strike > markPrice ? int256(zdtePositions[id].positions) *
                 (int256(strike) - int256(markPrice)) /
-                10**20 : 0;
+                10**20 : int(0);
         else
-            pnl = markPrice > strike ? (int256(0dtePositions[id].positions) *
+            pnl = markPrice > strike ? (int256(zdtePositions[id].positions) *
                 (int256(markPrice) - int256(strike))/int256(markPrice)) /
-                10**20 : 0;
+                10**20 : int(0);
     }
 
     /// @notice Public function to retrieve price of base asset from oracle

@@ -8,9 +8,9 @@ import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 
-contract 0dtePositionMinter is 
+contract ZdtePositionMinter is 
   ReentrancyGuard,
-  ERC721('OP-0dtePosition', 'OPSP'),
+  ERC721('OP-ZdtePosition', 'OPSP'),
   ERC721Enumerable,
   Ownable {
 
@@ -19,22 +19,22 @@ contract 0dtePositionMinter is
   /// @dev Token ID counter for straddle positions
   Counters.Counter private _tokenIdCounter;
 
-  address public 0dteContract;
+  address public zdteContract;
 
   constructor() {
-    0dteContract = msg.sender;
+    zdteContract = msg.sender;
   }
 
-  function set0dteContract(address _0dteContract)
+  function setZdteContract(address _zdteContract)
   public
   onlyOwner {
-    0dteContract = _0dteContract;
+    zdteContract = _zdteContract;
   }
 
   function mint(address to) public returns (uint tokenId) {
     require(
-      msg.sender == 0dteContract, 
-      "Only option 0dte contract can mint an 0dte position token"
+      msg.sender == zdteContract, 
+      "Only option zdte contract can mint an zdte position token"
     );
     tokenId = _tokenIdCounter.current();
     _tokenIdCounter.increment();

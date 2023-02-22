@@ -9,45 +9,45 @@ import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 // Libraries
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
-import {0dte} from '../0dte.sol';
+import {Zdte} from '../Zdte.sol';
 
 /**
- * @title 0dte LP Token
+ * @title Zdte LP Token
  */
-contract 0dteLP is ERC4626 {
+contract ZdteLP is ERC4626 {
 
     using SafeTransferLib for ERC20;
 
-    /// @dev The address of the 0dte contract creating the lp token
-    0dte public 0dte;
+    /// @dev The address of the zdte contract creating the lp token
+    Zdte public zdte;
 
-    /// @dev The address of the collateral contract for the 0dte lp
+    /// @dev The address of the collateral contract for the zdte lp
     ERC20 public collateral;
 
-    /// @dev The symbol reperesenting the underlying asset of the 0dte lp
+    /// @dev The symbol reperesenting the underlying asset of the zdte lp
     string public underlyingSymbol;
 
-    /// @dev The symbol representing the collateral token of the 0dte lp
+    /// @dev The symbol representing the collateral token of the zdte lp
     string public collateralSymbol;
 
     // @dev Total collateral assets available
     uint public _totalAssets;
 
-    // @dev Locked liquidity in active 0dte positions
+    // @dev Locked liquidity in active zdte positions
     uint public _lockedLiquidity;
 
     /*==== CONSTRUCTOR ====*/
     /**
-     * @param _0dte The address of the 0dte contract creating the lp token
-     * @param _collateral The address of the collateral asset in the 0dte contract
+     * @param _zdte The address of the zdte contract creating the lp token
+     * @param _collateral The address of the collateral asset in the zdte contract
      * @param _collateralSymbol The symbol of the collateral asset token
      */
     constructor(
-        address _0dte,
+        address _zdte,
         address _collateral,
         string memory _collateralSymbol
-    ) ERC4626(ERC20(_collateral), "0dte LP Token", "0dteLP") {
-        0dte = 0dte(_0dte);
+    ) ERC4626(ERC20(_collateral), "Zdte LP Token", "ZdteLP") {
+        zdte = Zdte(_zdte);
         collateralSymbol = _collateralSymbol;
 
         symbol = concatenate(_collateralSymbol, "-LP");
@@ -77,44 +77,44 @@ contract 0dteLP is ERC4626 {
     }
 
     function lockLiquidity(uint amount) public  {
-        require(msg.sender == address(0dte), "Only 0dte can call this function");
+        require(msg.sender == address(zdte), "Only zdte can call this function");
         _lockedLiquidity += amount;
     }
 
     function unlockLiquidity(uint amount) public {
-        require(msg.sender == address(0dte), "Only 0dte can call this function");
+        require(msg.sender == address(zdte), "Only zdte can call this function");
         _lockedLiquidity -= amount;
     }
 
     // Adds premium and fees to total available assets
     function addProceeds(uint proceeds) public {
-        require(msg.sender == address(0dte), "Only 0dte can call this function");
+        require(msg.sender == address(zdte), "Only zdte can call this function");
         _totalAssets += proceeds;
     }
 
     // Subtract loss from total available assets
     function subtractLoss(uint loss) public {
-        require(msg.sender == address(0dte), "Only 0dte can call this function");
+        require(msg.sender == address(zdte), "Only zdte can call this function");
         _totalAssets -= loss;
     }
 
     function beforeWithdraw(uint256 assets, uint256 /*shares*/ ) internal virtual override {
         require(assets <= totalAvailableAssets(), "Not enough available assets to satisfy withdrawal");
         /// -----------------------------------------------------------------------
-        /// Withdraw assets from 0dte contract
+        /// Withdraw assets from zdte contract
         /// -----------------------------------------------------------------------
-        0dte.claimCollateral(assets);
+        zdte.claimCollateral(assets);
         _totalAssets -= assets;
     }
 
     function afterDeposit(uint256 assets, uint256 /*shares*/ ) internal virtual override {
         /// -----------------------------------------------------------------------
-        /// Deposit assets into 0dte contract
+        /// Deposit assets into zdte contract
         /// -----------------------------------------------------------------------
         _totalAssets += assets;
-        // approve to 0dte
-        asset.safeApprove(address(0dte), assets);
-        // deposit into 0dte
-        asset.safeTransfer(address(0dte), assets);
+        // approve to zdte
+        asset.safeApprove(address(zdte), assets);
+        // deposit into zdte
+        asset.safeTransfer(address(zdte), assets);
     }
 }
