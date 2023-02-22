@@ -184,39 +184,55 @@ contract 0dte is Ownable, Pausable {
     }
 
     /// @notice Buys a 0dte option
+    // @param isPut is put option
+    // @param amount Amount of options to long
+    // @param strike Strike price
     function longOptionPosition(
         bool isPut,
         uint256 amount,
         uint256 strike
     ) public returns (uint256 id) {
         uint256 markPrice = getMarkPrice();
-
         require(
-            strike >= markPrice - markPrice * (100 - maxOtmPercentage) && 
-            strike <= markPrice + markPrice * (100 - maxOtmPercentage) &&
+            (
+                (
+                    isPut && 
+                    (
+                        (strike >= markPrice - (markPrice * (100 - maxOtmPercentage))) &&
+                        strike <= markPrice
+                    )
+                ) ||
+                (
+                    !isPut && 
+                    (
+                        (strike <= markPrice + (markPrice * (100 - maxOtmPercentage))) &&
+                        strike >= markPrice
+                    )
+                )
+            ) &&
             strike % strikeIncrement == 0,
             "Invalid strike"
         );
 
-        // Calculate premium for ATM option in quote
+        // Calculate premium for ATM option in quote (1e6)
         uint256 premium = calcPremium(
             strike,
             amount,
             1 days
         );
 
-        // Calculate opening fees in quote
-        uint256 openingFees = calcFees(amount * markPrice);
+        // Calculate opening fees in quote (1e6)
+        uint256 openingFees = calcFees(amount * markPrice / 10 ** 20);
 
         // We transfer premium + fees from user
         quote.transferFrom(msg.sender, address(this), premium + openingFees);
 
-        uint256 swapped;
-        uint256 entry;
-
         if (isPut) {
-            require(quoteLp.totalAvailableAssets() >= amount * strike, "Insufficient liquidity");
-            quoteLp.lockLiquidity(amount * strike);
+            require(
+                quoteLp.totalAvailableAssets() >= (amount * strike / 10 ** 20), 
+                "Insufficient liquidity"
+            );
+            quoteLp.lockLiquidity(amount * strike / 10 ** 20);
         } else {
             require(baseLp.totalAvailableAssets() >= amount, "Insufficient liquidity");
             baseLp.lockLiquidity(amount);
@@ -274,7 +290,7 @@ contract 0dte is Ownable, Pausable {
 
         if (0dtePositions[id].isPut) {
             quoteLp.unlockLiquidity(
-                0dtePositions[id].entry * 0dtePositions[id].positions
+                0dtePositions[id].strike * 0dtePositions[id].positions
             );
             quote.transfer(
                 IERC721(0dtePositionMinter).ownerOf(id),
@@ -314,15 +330,15 @@ contract 0dte is Ownable, Pausable {
         volatility = uint256(volatilityOracle.getVolatility(strike));
     }
 
-    /// @notice Internal function to calculate premium
+    /// @notice Internal function to calculate premium in quote
     /// @param strike Strike of option
     /// @param amount Amount of option
     function calcPremium(
-        uint256 strike,
-        uint256 amount,
+        uint256 strike, // 1e8
+        uint256 amount, // 1e18
         uint256 timeToExpiry
     ) internal view returns (uint256 premium) {
-        uint256 markPrice = getMarkPrice();
+        uint256 markPrice = getMarkPrice(); // 1e8
         uint256 expiry = block.timestamp + timeToExpiry;
         premium = uint256(
             optionPricing.getOptionPrice(
@@ -334,7 +350,8 @@ contract 0dte is Ownable, Pausable {
             )
         ) * amount; // ATM options: does not matter if call or put
 
-        premium = premium / (divisor / uint256(10**quote.decimals()));
+        // Convert to 6 decimal places (quote asset)
+        premium = premium / (10 ** 20);
     }
 
     /// @notice Internal function to calculate fees
@@ -345,17 +362,18 @@ contract 0dte is Ownable, Pausable {
 
     /// @notice Internal function to calculate pnl
     /// @param id ID of position
+    /// @return pnl PNL in quote asset i.e USD (1e6)
     function calcPnl(uint256 id) internal view returns (int256 pnl) {
         uint256 markPrice = getMarkPrice();
         uint256 strike = 0dtePositions[id].strike;
         if (0dtePositions[id].isPut)
             pnl = strike > markPrice ? int256(0dtePositions[id].positions) *
                 (int256(strike) - int256(markPrice)) /
-                10**8 : 0;
+                10**20 : 0;
         else
             pnl = markPrice > strike ? (int256(0dtePositions[id].positions) *
                 (int256(markPrice) - int256(strike))/int256(markPrice)) /
-                10**8 : 0;
+                10**20 : 0;
     }
 
     /// @notice Public function to retrieve price of base asset from oracle
