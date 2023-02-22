@@ -16,6 +16,17 @@ describe("Zdte", function() {
   let zdte;
   let b50;
   let bf5;
+  let initialBaseDeposit = ethers.utils.parseEther("20.0");
+  let initialQuoteDeposit = 100000000000;
+
+  const timeTravelOneDay = async () => {
+    const blockNumber = await ethers.provider.getBlockNumber();
+    const block = await ethers.provider.getBlock(blockNumber);
+    const timestamp = block.timestamp;
+    const nextDayTimestamp = timestamp + 86400;
+    await network.provider.send("evm_setNextBlockTimestamp", [nextDayTimestamp]);
+    await network.provider.send("evm_mine");
+  }
 
   before(async () => {
     signers = await ethers.getSigners();
@@ -82,8 +93,8 @@ describe("Zdte", function() {
     );
 
     [user0, user1, user2, user3].map(async user => {
-      await weth.connect(b50).transfer(user.address, ethers.utils.parseEther("10.0"));
-      await usdc.connect(bf5).transfer(user.address, "10000000000");
+      await weth.connect(b50).transfer(user.address, initialBaseDeposit);
+      await usdc.connect(bf5).transfer(user.address, initialQuoteDeposit);
 
       await b50.sendTransaction({
         to: user.address,
@@ -93,24 +104,29 @@ describe("Zdte", function() {
   });
 
   it("user 0 deposits", async function() {
-    await usdc.connect(user0).approve(zdte.address, "10000000000");
-    await weth.connect(user0).approve(zdte.address, ethers.utils.parseEther("10.0"));
+    await usdc.connect(user0).approve(zdte.address, initialQuoteDeposit);
+    await weth.connect(user0).approve(zdte.address, initialBaseDeposit);
 
     await expect(zdte.connect(user0).deposit(true, "100000000000000000000000"))
     .to.be.revertedWith("ERC20: transfer amount exceeds balance");
 
-    await zdte.connect(user0).deposit(true, "10000000000");
-    await zdte.connect(user0).deposit(false, ethers.utils.parseEther("10.0"));
+    await zdte.connect(user0).deposit(true, initialQuoteDeposit);
+    await zdte.connect(user0).deposit(false, initialBaseDeposit);
   });
 
   it("user 0 withdraws half", async function() {
-    const zdteLpAddress = await zdte.connect(user0).quoteLp();
-    quoteLp = await ethers.getContractAt("contracts/interface/IERC20.sol:IERC20", zdteLpAddress);
+    const quoteLpAddress = await zdte.connect(user0).quoteLp();
+    quoteLp = await ethers.getContractAt("contracts/token/ZdteLP.sol:ZdteLP", quoteLpAddress);
+
+    const baseLpAddress = await zdte.connect(user0).baseLp();
+    baseLp = await ethers.getContractAt("contracts/token/ZdteLP.sol:ZdteLP", baseLpAddress);
+
     const balance = await quoteLp.balanceOf(user0.address);
-    expect(balance).to.eq("10000000000");
+    expect(balance).to.eq("100000000000");
 
     // Allowance is required
     await quoteLp.connect(user0).approve(zdte.address, "1000000000000000000000000000000000");
+    await baseLp.connect(user0).approve(zdte.address, "1000000000000000000000000000000000");
 
     await expect(zdte.connect(user0).withdraw(true, "10000000000000"))
       .to.be.revertedWith('Not enough available assets to satisfy withdrawal');
@@ -120,10 +136,10 @@ describe("Zdte", function() {
     const endQuoteBalance = await usdc.balanceOf(user0.address);
 
     const quoteOut = endQuoteBalance.sub(startQuoteBalance);
-    expect(quoteOut).to.eq("5000000000");
+    expect(quoteOut).to.eq("50000000000");
   });
 
-  it("user 1 opens long call position", async function() {
+  it("user 1 opens profitable long call position", async function() {
     await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
     const startQuoteBalance = await usdc.balanceOf(user1.address);
     console.log('Start quote balance:', startQuoteBalance.toString());
@@ -135,42 +151,113 @@ describe("Zdte", function() {
       "160000000000", 
     ); // 1 $1600 call option
 
-    let quoteBalance = await usdc.balanceOf(user1.address);
-    let baseBalance = await weth.balanceOf(user1.address);
-    console.log('Quote balance post-purchase:', quoteBalance.toString());
-    console.log('Base balance post-purchase:', baseBalance.toString());
-    // expect(quoteBalance).to.eq('9984617978');
+    let preExpireBaseBalance = await weth.balanceOf(user1.address);
 
     await priceOracle.updateUnderlyingPrice("165000000000"); // $1650
-
-    const blockNumber = await ethers.provider.getBlockNumber();
-    const block = await ethers.provider.getBlock(blockNumber);
-    const timestamp = block.timestamp;
-    const nextDayTimestamp = timestamp + 86400;
-    await network.provider.send("evm_setNextBlockTimestamp", [nextDayTimestamp]);
-    await network.provider.send("evm_mine");
-
+    await timeTravelOneDay();
     await zdte.connect(user1).expireOptionPosition(0);
 
     quoteBalance = await usdc.balanceOf(user1.address);
     baseBalance = await weth.balanceOf(user1.address);
-    console.log('Quote balance post-expiry:', quoteBalance.toString());
-    console.log('Base balance post-expiry:', baseBalance.toString());
+    let pnl = baseBalance.sub(preExpireBaseBalance);
+
+    expect(pnl.mul("165000000000").div("1000000000000000000")).equals("4999999999");
   });
 
-  it("user 1 opens long put position", async function() {
+  it("user 1 opens profitable long put position", async function() {
+    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
+    const startQuoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Start quote balance:', startQuoteBalance.toString());
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+    await zdte.connect(user1).longOptionPosition(
+      true, 
+      "1000000000000000000",
+      "160000000000", 
+    ); // 1 $1600 put option
+
+    let preExpireQuoteBalance = await usdc.balanceOf(user1.address);
+
+    await priceOracle.updateUnderlyingPrice("155000000000"); // $1550
+    await timeTravelOneDay();
+    await zdte.connect(user1).expireOptionPosition(1);
+
+    let postExpireQuoteBalance = await usdc.balanceOf(user1.address);
+    let pnl = postExpireQuoteBalance.sub(preExpireQuoteBalance);
+
+    expect(pnl.div("1000000")).equals("50");
   });
 
-  it("user 1 closes profitable long call position", async function() {
+  it("user 0 withdraws profitable quote LP position", async function() {
+    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
+    const startQuoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Start quote balance:', startQuoteBalance.toString());
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+    await zdte.connect(user1).longOptionPosition(
+      true, 
+      "10000000000000000000",
+      "160000000000", 
+    ); // 10 $1600 put option
+    await timeTravelOneDay();
+    await zdte.connect(user1).expireOptionPosition(2);
+
+    await zdte.connect(user0).withdraw(true, (await quoteLp.balanceOf(user0.address)));
+    const postWithdrawQuoteBalance = (await usdc.balanceOf(user0.address)).toNumber();
+    
+    expect(postWithdrawQuoteBalance).gt(initialQuoteDeposit);
   });
 
-  it("user 1 closes unprofitable long put position", async function() {
+  it("user 0 cannot withdraw more than available assets from quote LP ", async function() {
+    await usdc.connect(user0).approve(zdte.address, initialQuoteDeposit);
+    await zdte.connect(user0).deposit(true, initialQuoteDeposit);
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+    await zdte.connect(user1).longOptionPosition(
+      true, 
+      "1000000000000000000",
+      "160000000000", 
+    ); // 1 $1600 put option
+
+    await expect(
+      zdte.connect(user0).withdraw(true, await quoteLp.balanceOf(user0.address))
+    ).to.be.revertedWith("Not enough available assets to satisfy withdrawal");
   });
 
-  it("user 0 withdraws profitable LP position", async function() {
+  it("user 0 withdraws profitable base LP position", async function() {
+    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+
+    await zdte.connect(user1).longOptionPosition(
+      false, 
+      "10000000000000000000",
+      "160000000000", 
+    ); // 5 $1600 call option
+    await timeTravelOneDay();
+    await zdte.connect(user1).expireOptionPosition(3);
+    await zdte.connect(user1).expireOptionPosition(4);
+
+    await zdte.connect(user0).withdraw(false, (await baseLp.balanceOf(user0.address)));
+    const postWithdrawBaseBalance = await weth.balanceOf(user0.address);
+    
+    expect(postWithdrawBaseBalance.gt(initialBaseDeposit)).equals(true);
   });
 
-  it("user 0 cannot withdraw more than available assets from LP ", async function() {
+  it("user 0 cannot withdraw more than available assets from base LP ", async function() {
+    await weth.connect(user0).approve(zdte.address, initialBaseDeposit);
+    await zdte.connect(user0).deposit(false, initialBaseDeposit);
+
+    await weth.connect(user1).approve(zdte.address, initialBaseDeposit);
+    await zdte.connect(user1).longOptionPosition(
+      false, 
+      "1000000000000000000",
+      "160000000000", 
+    ); // 1 $1600 call option
+
+    await expect(
+      zdte.connect(user0).withdraw(false, await baseLp.balanceOf(user0.address))
+    ).to.be.revertedWith("Not enough available assets to satisfy withdrawal");
   });
 
 });

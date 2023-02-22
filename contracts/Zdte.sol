@@ -285,7 +285,6 @@ contract Zdte is Ownable, Pausable {
         );
 
         uint pnl = calcPnl(id);
-        console.log("zdte pnl: %s", pnl);
 
         if (pnl > 0)
             if (zdtePositions[id].isPut) {
@@ -305,6 +304,16 @@ contract Zdte is Ownable, Pausable {
                     pnl
                 );
             }
+        else
+            if (zdtePositions[id].isPut) 
+                quoteLp.unlockLiquidity(
+                    zdtePositions[id].strike * zdtePositions[id].positions / 10 ** 20
+                );
+            else {
+                console.log("unlock liquidity: %s", zdtePositions[id].positions);
+                baseLp.unlockLiquidity(zdtePositions[id].positions);
+            }
+            
         zdtePositions[id].isOpen = false;
         emit ExpireOptionPosition(id, pnl, msg.sender);
     }
