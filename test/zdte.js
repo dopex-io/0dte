@@ -136,7 +136,9 @@ describe("Zdte", function() {
     ); // 1 $1600 call option
 
     let quoteBalance = await usdc.balanceOf(user1.address);
+    let baseBalance = await weth.balanceOf(user1.address);
     console.log('Quote balance post-purchase:', quoteBalance.toString());
+    console.log('Base balance post-purchase:', baseBalance.toString());
     // expect(quoteBalance).to.eq('9984617978');
 
     await priceOracle.updateUnderlyingPrice("165000000000"); // $1650
@@ -151,7 +153,9 @@ describe("Zdte", function() {
     await zdte.connect(user1).expireOptionPosition(0);
 
     quoteBalance = await usdc.balanceOf(user1.address);
+    baseBalance = await weth.balanceOf(user1.address);
     console.log('Quote balance post-expiry:', quoteBalance.toString());
+    console.log('Base balance post-expiry:', baseBalance.toString());
   });
 
   it("user 1 opens long put position", async function() {

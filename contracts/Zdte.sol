@@ -89,7 +89,7 @@ contract Zdte is Ownable, Pausable {
     event LongOptionPosition(uint256 id, uint256 amount, uint256 strike, address indexed user);
 
     // Expire option position event
-    event ExpireOptionPosition(uint256 id, int256 pnl, address indexed user);
+    event ExpireOptionPosition(uint256 id, uint256 pnl, address indexed user);
 
     constructor(
         address _base,
@@ -284,23 +284,27 @@ contract Zdte is Ownable, Pausable {
             "Position must be expired"
         );
 
-        int256 pnl = calcPnl(id);
+        uint pnl = calcPnl(id);
+        console.log("zdte pnl: %s", pnl);
 
-        if (zdtePositions[id].isPut) {
-            quoteLp.unlockLiquidity(
-                zdtePositions[id].strike * zdtePositions[id].positions
-            );
-            quote.transfer(
-                IERC721(zdtePositionMinter).ownerOf(id),
-                uint256(pnl)
-            );
-        } else {
-            baseLp.unlockLiquidity(zdtePositions[id].positions);
-            base.transfer(
-                IERC721(zdtePositionMinter).ownerOf(id),
-                uint256(pnl)
-            );
-        }
+        if (pnl > 0)
+            if (zdtePositions[id].isPut) {
+                quoteLp.unlockLiquidity(
+                    zdtePositions[id].strike * zdtePositions[id].positions / 10 ** 20
+                );
+                quoteLp.subtractLoss(pnl);
+                quote.transfer(
+                    IERC721(zdtePositionMinter).ownerOf(id),
+                    pnl
+                );
+            } else {
+                baseLp.unlockLiquidity(zdtePositions[id].positions);
+                baseLp.subtractLoss(pnl);
+                base.transfer(
+                    IERC721(zdtePositionMinter).ownerOf(id),
+                    pnl
+                );
+            }
         zdtePositions[id].isOpen = false;
         emit ExpireOptionPosition(id, pnl, msg.sender);
     }
@@ -362,17 +366,17 @@ contract Zdte is Ownable, Pausable {
     /// @notice Internal function to calculate pnl
     /// @param id ID of position
     /// @return pnl PNL in quote asset i.e USD (1e6)
-    function calcPnl(uint256 id) internal view returns (int256 pnl) {
+    function calcPnl(uint256 id) internal view returns (uint pnl) {
         uint256 markPrice = getMarkPrice();
         uint256 strike = zdtePositions[id].strike;
         if (zdtePositions[id].isPut)
-            pnl = strike > markPrice ? int256(zdtePositions[id].positions) *
-                (int256(strike) - int256(markPrice)) /
-                10**20 : int(0);
-        else
-            pnl = markPrice > strike ? (int256(zdtePositions[id].positions) *
-                (int256(markPrice) - int256(strike))/int256(markPrice)) /
-                10**20 : int(0);
+            pnl = strike > markPrice ? (zdtePositions[id].positions) *
+                (strike - markPrice) /
+                10**20 : 0;
+        else {
+                pnl = markPrice > strike ? (zdtePositions[id].positions *
+                    (markPrice - strike)/markPrice) : 0;
+        }
     }
 
     /// @notice Public function to retrieve price of base asset from oracle
