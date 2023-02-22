@@ -184,8 +184,8 @@ contract Zdte is Ownable, Pausable {
 
     /// @notice Buys a zdte option
     // @param isPut is put option
-    // @param amount Amount of options to long
-    // @param strike Strike price
+    // @param amount Amount of options to long // 1e18
+    // @param strike Strike price // 1e8
     function longOptionPosition(
         bool isPut,
         uint256 amount,

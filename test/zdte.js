@@ -124,6 +124,34 @@ describe("Zdte", function() {
   });
 
   it("user 1 opens long call position", async function() {
+    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
+    const startQuoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Start quote balance:', startQuoteBalance.toString());
+
+    await usdc.connect(user1).approve(zdte.address, "10000000000");
+    await zdte.connect(user1).longOptionPosition(
+      false, 
+      "1000000000000000000",
+      "160000000000", 
+    ); // 1 $1600 call option
+
+    let quoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Quote balance post-purchase:', quoteBalance.toString());
+    // expect(quoteBalance).to.eq('9984617978');
+
+    await priceOracle.updateUnderlyingPrice("165000000000"); // $1650
+
+    const blockNumber = await ethers.provider.getBlockNumber();
+    const block = await ethers.provider.getBlock(blockNumber);
+    const timestamp = block.timestamp;
+    const nextDayTimestamp = timestamp + 86400;
+    await network.provider.send("evm_setNextBlockTimestamp", [nextDayTimestamp]);
+    await network.provider.send("evm_mine");
+
+    await zdte.connect(user1).expireOptionPosition(0);
+
+    quoteBalance = await usdc.balanceOf(user1.address);
+    console.log('Quote balance post-expiry:', quoteBalance.toString());
   });
 
   it("user 1 opens long put position", async function() {
