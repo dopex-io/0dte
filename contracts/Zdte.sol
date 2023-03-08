@@ -1,33 +1,31 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
-
-import {IERC20} from "./interface/IERC20.sol";
-import {SafeERC20} from "./libraries/SafeERC20.sol";
+pragma solidity ^0.8.19;
 
 import {ZdteLP} from "./token/ZdteLP.sol";
 
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ZdtePositionMinter} from "./positions/ZdtePositionMinter.sol";
 
-import {Pausable} from "./helpers/Pausable.sol";
+import {ContractWhitelist} from "./helpers/ContractWhitelist.sol";
 
 import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
 import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 
-import "hardhat/console.sol";
-
-contract Zdte is Ownable, Pausable {
-    using SafeERC20 for IERC20;
+contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
+    using SafeERC20 for IERC20Metadata;
 
     // Base token
-    IERC20 public base;
+    IERC20Metadata public base;
     // Quote token
-    IERC20 public quote;
+    IERC20Metadata public quote;
     // zdte Base LP token
     ZdteLP public baseLp;
     // zdte Quotee LP token
@@ -50,6 +48,9 @@ contract Zdte is Ownable, Pausable {
     uint256 public feeOpenPosition = 5000000; // 0.05%
 
     uint256 public constant divisor = 1e8;
+
+    uint256 internal constant AMOUNT_PRICE_TO_USDC_DECIMALS =
+        (1e18 * 1e8) / 1e6;
 
     // Strike increments
     uint256 public strikeIncrement;
@@ -96,6 +97,11 @@ contract Zdte is Ownable, Pausable {
     // Expire option position event
     event ExpireOptionPosition(uint256 id, uint256 pnl, address indexed user);
 
+    // Claim collateral
+    event ClaimCollateral(uint256 amount, address indexed sender);
+
+    /*==== CONSTRUCTOR ====*/
+
     constructor(
         address _base,
         address _quote,
@@ -103,9 +109,9 @@ contract Zdte is Ownable, Pausable {
         address _volatilityOracle,
         address _priceOracle,
         address _uniswapV3Router,
-        uint _strikeIncrement,
-        uint _maxOtmPercentage,
-        uint _genesisExpiry
+        uint256 _strikeIncrement,
+        uint256 _maxOtmPercentage,
+        uint256 _genesisExpiry
     ) {
         require(_base != address(0), "Invalid base token");
         require(_quote != address(0), "Invalid quote token");
@@ -117,8 +123,8 @@ contract Zdte is Ownable, Pausable {
         require(_maxOtmPercentage > 0, "Invalid max OTM %");
         require(_genesisExpiry > block.timestamp, "Invalid genesis expiry");
 
-        base = IERC20(_base);
-        quote = IERC20(_quote);
+        base = IERC20Metadata(_base);
+        quote = IERC20Metadata(_quote);
         optionPricing = IOptionPricing(_optionPricing);
         volatilityOracle = IVolatilityOracle(_volatilityOracle);
         priceOracle = IPriceOracle(_priceOracle);
@@ -126,7 +132,7 @@ contract Zdte is Ownable, Pausable {
 
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
-        genesisExpiry= _genesisExpiry;
+        genesisExpiry = _genesisExpiry;
 
         zdtePositionMinter = new ZdtePositionMinter();
 
@@ -140,48 +146,26 @@ contract Zdte is Ownable, Pausable {
         base.approve(address(baseLp), type(uint256).max);
     }
 
-    /// @notice Internal function to handle swaps using Uniswap V3 exactIn
-    /// @param from Address of the token to sell
-    /// @param to Address of the token to buy
-    /// @param amountOut Target amount of to token we want to receive
-    function _swapExactIn(
-        address from,
-        address to,
-        uint256 amountIn
-    ) internal returns (uint256 amountOut) {
-        return
-            uniswapV3Router.exactInputSingle(
-                IUniswapV3Router.ExactInputSingleParams({
-                    tokenIn: from,
-                    tokenOut: to,
-                    fee: 500,
-                    recipient: address(this),
-                    deadline: block.timestamp,
-                    amountIn: amountIn,
-                    amountOutMinimum: 0,
-                    sqrtPriceLimitX96: 0
-                })
-            );
-    }
+    /*==== USER METHODS ====*/
 
-    // Deposit assets
-    // @param isQuote If true user deposits quote token (else base)
-    // @param amount Amount of quote asset to deposit to LP
-    function deposit(bool isQuote, uint256 amount) public {
+    /// @notice Deposit assets
+    /// @param isQuote If true user deposits quote token (else base)
+    /// @param amount Amount of quote asset to deposit to LP
+    function deposit(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            quote.transferFrom(msg.sender, address(this), amount);
+            quote.safeTransferFrom(msg.sender, address(this), amount);
             quoteLp.deposit(amount, msg.sender);
         } else {
-            base.transferFrom(msg.sender, address(this), amount);
+            base.safeTransferFrom(msg.sender, address(this), amount);
             baseLp.deposit(amount, msg.sender);
         }
         emit Deposit(isQuote, amount, msg.sender);
     }
 
-    // Withdraw
-    // @param isQuote If true user withdraws quote token (else base)
-    // @param amount Amount of LP positions to withdraw
-    function withdraw(bool isQuote, uint256 amount) public {
+    /// @notice Withdraw
+    /// @param isQuote If true user withdraws quote token (else base)
+    /// @param amount Amount of LP positions to withdraw
+    function withdraw(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
             quoteLp.redeem(amount, msg.sender, msg.sender);
         } else {
@@ -191,55 +175,37 @@ contract Zdte is Ownable, Pausable {
     }
 
     /// @notice Buys a zdte option
-    // @param isPut is put option
-    // @param amount Amount of options to long // 1e18
-    // @param strike Strike price // 1e8
-    function longOptionPosition(
-        bool isPut,
-        uint256 amount,
-        uint256 strike
-    ) public returns (uint256 id) {
+    /// @param isPut is put option
+    /// @param amount Amount of options to long // 1e18
+    /// @param strike Strike price // 1e8
+    function longOptionPosition(bool isPut, uint256 amount, uint256 strike)
+        external
+        whenNotPaused
+        nonReentrant
+        isEligibleSender
+        returns (uint256 id)
+    {
         uint256 markPrice = getMarkPrice();
         require(
             (
-                (
-                    isPut && 
-                    (
-                        (strike >= (markPrice * (100 - maxOtmPercentage) / 100)) &&
-                        strike <= markPrice
-                    )
-                ) ||
-                (
-                    !isPut && 
-                    (
-                        (strike <= (markPrice * (100 + maxOtmPercentage) / 100)) &&
-                        strike >= markPrice
-                    )
-                )
-            ) &&
-            strike % strikeIncrement == 0,
+                (isPut && ((strike >= (markPrice * (100 - maxOtmPercentage) / 100)) && strike <= markPrice))
+                    || (!isPut && ((strike <= (markPrice * (100 + maxOtmPercentage) / 100)) && strike >= markPrice))
+            ) && strike % strikeIncrement == 0,
             "Invalid strike"
         );
 
         // Calculate premium for ATM option in quote (1e6)
-        uint256 premium = calcPremium(
-            strike,
-            amount,
-            1 days
-        );
+        uint256 premium = calcPremium(strike, amount, 1 days);
 
         // Calculate opening fees in quote (1e6)
-        uint256 openingFees = calcFees(amount * markPrice / 10 ** 20);
+        uint256 openingFees = calcFees(amount * markPrice / AMOUNT_PRICE_TO_USDC_DECIMALS);
 
         // We transfer premium + fees from user
         quote.transferFrom(msg.sender, address(this), premium + openingFees);
 
         if (isPut) {
-            require(
-                quoteLp.totalAvailableAssets() >= (amount * strike / 10 ** 20), 
-                "Insufficient liquidity"
-            );
-            quoteLp.lockLiquidity(amount * strike / 10 ** 20);
+            require(quoteLp.totalAvailableAssets() >= (amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS), "Insufficient liquidity");
+            quoteLp.lockLiquidity(amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS);
         } else {
             require(baseLp.totalAvailableAssets() >= amount, "Insufficient liquidity");
             baseLp.lockLiquidity(amount);
@@ -250,17 +216,8 @@ contract Zdte is Ownable, Pausable {
             quoteLp.deposit(openingFees, feeDistributor);
             quoteLp.addProceeds(premium);
         } else {
-            uint256 basePremium = _swapExactIn(
-                address(quote),
-                address(base),
-                premium
-            );
-
-            uint256 baseOpeningFees = _swapExactIn(
-                address(quote),
-                address(base),
-                openingFees
-            );
+            uint256 basePremium = _swapExactIn(address(quote), address(base), premium);
+            uint256 baseOpeningFees = _swapExactIn(address(quote), address(base), openingFees);
             baseLp.deposit(baseOpeningFees, feeDistributor);
             baseLp.addProceeds(basePremium);
         }
@@ -285,67 +242,60 @@ contract Zdte is Ownable, Pausable {
 
     /// @notice Expires an open option position
     /// @param id ID of position
-    function expireOptionPosition(uint256 id) public {
+    function expireOptionPosition(uint256 id) external {
         require(zdtePositions[id].isOpen, "Invalid position ID");
 
-        require(
-            zdtePositions[id].expiry <= block.timestamp,
-            "Position must be past expiry time"
-        );
+        require(zdtePositions[id].expiry <= block.timestamp, "Position must be past expiry time");
 
-        uint pnl = calcPnl(id);
+        uint256 pnl = calcPnl(id);
 
-        if (pnl > 0)
+        if (pnl > 0) {
             if (zdtePositions[id].isPut) {
-                quoteLp.unlockLiquidity(
-                    zdtePositions[id].strike * zdtePositions[id].positions / 10 ** 20
-                );
+                quoteLp.unlockLiquidity(zdtePositions[id].strike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS);
                 quoteLp.subtractLoss(pnl);
-                quote.transfer(
-                    IERC721(zdtePositionMinter).ownerOf(id),
-                    pnl
-                );
+                quote.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
             } else {
                 baseLp.unlockLiquidity(zdtePositions[id].positions);
                 baseLp.subtractLoss(pnl);
-                base.transfer(
-                    IERC721(zdtePositionMinter).ownerOf(id),
-                    pnl
-                );
+                base.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
             }
-        else
-            if (zdtePositions[id].isPut) 
-                quoteLp.unlockLiquidity(
-                    zdtePositions[id].strike * zdtePositions[id].positions / 10 ** 20
-                );
-            else {
-                baseLp.unlockLiquidity(zdtePositions[id].positions);
-            }
-            
+        } else if (zdtePositions[id].isPut) {
+            quoteLp.unlockLiquidity(zdtePositions[id].strike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS);
+        } else {
+            baseLp.unlockLiquidity(zdtePositions[id].positions);
+        }
+
         zdtePositions[id].isOpen = false;
+
         emit ExpireOptionPosition(id, pnl, msg.sender);
     }
 
-    /// @notice Allow only zdte LP contract to claim collateral
-    /// @param amount Amount of quote/base assets to transfer
-    function claimCollateral(uint256 amount) public {
-        require(
-            msg.sender == address(quoteLp) || msg.sender == address(baseLp),
-            "Only zdte LP contract can claim collateral"
+    /*==== INTERNAL METHODS ====*/
+
+    /// @notice Internal function to handle swaps using Uniswap V3 exactIn
+    /// @param from Address of the token to sell
+    /// @param to Address of the token to buy
+    /// @param amountOut Target amount of to token we want to receive
+    function _swapExactIn(address from, address to, uint256 amountIn) internal returns (uint256 amountOut) {
+        return uniswapV3Router.exactInputSingle(
+            IUniswapV3Router.ExactInputSingleParams({
+                tokenIn: from,
+                tokenOut: to,
+                fee: 500,
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            })
         );
-        if (msg.sender == address(quoteLp)) 
-            quote.transfer(msg.sender, amount);
-        else if (msg.sender == address(baseLp))
-            base.transfer(msg.sender, amount);
     }
+
+    /*==== VIEWS ====*/
 
     /// @notice External function to return the volatility
     /// @param strike Strike of option
-    function getVolatility(uint256 strike)
-        public
-        view
-        returns (uint256 volatility)
-    {
+    function getVolatility(uint256 strike) public view returns (uint256 volatility) {
         volatility = uint256(volatilityOracle.getVolatility(strike));
     }
 
@@ -360,18 +310,11 @@ contract Zdte is Ownable, Pausable {
     ) internal view returns (uint256 premium) {
         uint256 markPrice = getMarkPrice(); // 1e8
         uint256 expiry = block.timestamp + timeToExpiry;
-        premium = uint256(
-            optionPricing.getOptionPrice(
-                false,
-                expiry,
-                strike,
-                markPrice,
-                getVolatility(strike)
-            )
-        ) * amount; // ATM options: does not matter if call or put
+        premium =
+            uint256(optionPricing.getOptionPrice(false, expiry, strike, markPrice, getVolatility(strike))) * amount; // ATM options: does not matter if call or put
 
         // Convert to 6 decimal places (quote asset)
-        premium = premium / (10 ** 20);
+        premium = premium / (AMOUNT_PRICE_TO_USDC_DECIMALS);
     }
 
     /// @notice Internal function to calculate fees
@@ -383,16 +326,13 @@ contract Zdte is Ownable, Pausable {
     /// @notice Internal function to calculate pnl
     /// @param id ID of position
     /// @return pnl PNL in quote asset i.e USD (1e6)
-    function calcPnl(uint256 id) internal view returns (uint pnl) {
+    function calcPnl(uint256 id) internal view returns (uint256 pnl) {
         uint256 markPrice = getMarkPrice();
         uint256 strike = zdtePositions[id].strike;
-        if (zdtePositions[id].isPut)
-            pnl = strike > markPrice ? (zdtePositions[id].positions) *
-                (strike - markPrice) /
-                10**20 : 0;
-        else {
-                pnl = markPrice > strike ? (zdtePositions[id].positions *
-                    (markPrice - strike)/markPrice) : 0;
+        if (zdtePositions[id].isPut) {
+            pnl = strike > markPrice ? (zdtePositions[id].positions) * (strike - markPrice) / AMOUNT_PRICE_TO_USDC_DECIMALS : 0;
+        } else {
+            pnl = markPrice > strike ? (zdtePositions[id].positions * (markPrice - strike) / markPrice) : 0;
         }
     }
 
@@ -404,10 +344,74 @@ contract Zdte is Ownable, Pausable {
 
     /// @notice Public function to return the next expiry timestamp
     function getCurrentExpiry() public view returns (uint256 expiry) {
-        if (block.timestamp > genesisExpiry)
+        if (block.timestamp > genesisExpiry) {
             expiry = genesisExpiry + ((((block.timestamp - genesisExpiry) / 1 days) + 1) * 1 days);
-        else
+        } else {
             expiry = genesisExpiry;
+        }
     }
 
+    /*==== MANAGER METHODS ====*/
+
+    /// @notice Allow only zdte LP contract to claim collateral
+    /// @param amount Amount of quote/base assets to transfer
+    function claimCollateral(uint256 amount) external {
+        require(
+            msg.sender == address(quoteLp) || msg.sender == address(baseLp),
+            "Only zdte LP contract can claim collateral"
+        );
+        if (msg.sender == address(quoteLp)) {
+            quote.transfer(msg.sender, amount);
+        } else if (msg.sender == address(baseLp)) {
+            base.transfer(msg.sender, amount);
+        }
+        emit ClaimCollateral(amount, msg.sender);
+    }
+
+    /*==== ADMIN METHODS ====*/
+
+    /// @notice Pauses the vault for emergency cases
+    /// @dev Can only be called by admin
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpauses the vault
+    /// @dev Can only be called by admin
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @notice Add a contract to the whitelist
+    /// @dev Can only be called by the owner
+    /// @param _contract Address of the contract that needs to be added to the whitelist
+    function addToContractWhitelist(address _contract) external onlyOwner {
+        _addToContractWhitelist(_contract);
+    }
+
+    /// @notice Remove a contract to the whitelist
+    /// @dev Can only be called by the owner
+    /// @param _contract Address of the contract that needs to be removed from the whitelist
+    function removeFromContractWhitelist(address _contract) external onlyOwner {
+        _removeFromContractWhitelist(_contract);
+    }
+
+    /// @notice Transfers all funds to msg.sender
+    /// @dev Can only be called by admin
+    /// @param tokens The list of erc20 tokens to withdraw
+    /// @param transferNative Whether should transfer the native currency
+    function emergencyWithdraw(address[] calldata tokens, bool transferNative) external onlyOwner whenPaused {
+        if (transferNative) {
+            payable(msg.sender).transfer(address(this).balance);
+        }
+
+        for (uint256 i; i < tokens.length;) {
+            IERC20Metadata token = IERC20Metadata(tokens[i]);
+            token.safeTransfer(msg.sender, token.balanceOf(address(this)));
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
 }
