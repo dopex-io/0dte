@@ -28,6 +28,14 @@ describe("Zdte", function() {
     await network.provider.send("evm_mine");
   }
 
+  const getNextExpiryTimestamp = () => {
+    const nextNoon = new Date();
+    if (nextNoon.getHours() >= 12) 
+      nextNoon.setDate(nextNoon.getDate() + 1);
+    nextNoon.setHours(12, 0, 0, 0);
+    return (nextNoon.getTime() / 1000).toString();
+  }
+
   before(async () => {
     signers = await ethers.getSigners();
     owner = signers[0];
@@ -68,10 +76,10 @@ describe("Zdte", function() {
       optionPricing.address,
       volatilityOracle.address,
       priceOracle.address,
-      "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3 ROUTER,
-      "5000000000", // Strike increment => 50 * 1e8,
-      "10", // Max OTM % => 10%،
-      "1677139200"
+      "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3 ROUTER
+      "5000000000", // Strike increment => 50 * 1e8
+      "10", // Max OTM % => 10%
+      getNextExpiryTimestamp()
     );
 
     console.log("deployed Zdte:", zdte.address);
@@ -161,7 +169,7 @@ describe("Zdte", function() {
 
     await priceOracle.updateUnderlyingPrice("165000000000"); // $1650
     await timeTravelOneDay();
-    await zdte.connect(user1).expireOptionPosition(0);
+    await zdte.connect(user1).expireLongOptionPosition(0);
 
     quoteBalance = await usdc.balanceOf(user1.address);
     baseBalance = await weth.balanceOf(user1.address);
@@ -186,7 +194,7 @@ describe("Zdte", function() {
 
     await priceOracle.updateUnderlyingPrice("155000000000"); // $1550
     await timeTravelOneDay();
-    await zdte.connect(user1).expireOptionPosition(1);
+    await zdte.connect(user1).expireLongOptionPosition(1);
 
     let postExpireQuoteBalance = await usdc.balanceOf(user1.address);
     let pnl = postExpireQuoteBalance.sub(preExpireQuoteBalance);
@@ -206,7 +214,7 @@ describe("Zdte", function() {
       "160000000000", 
     ); // 10 $1600 put option
     await timeTravelOneDay();
-    await zdte.connect(user1).expireOptionPosition(2);
+    await zdte.connect(user1).expireLongOptionPosition(2);
 
     await zdte.connect(user0).withdraw(true, (await quoteLp.balanceOf(user0.address)));
     const postWithdrawQuoteBalance = (await usdc.balanceOf(user0.address)).toNumber();
@@ -241,8 +249,8 @@ describe("Zdte", function() {
       "160000000000", 
     ); // 5 $1600 call option
     await timeTravelOneDay();
-    await zdte.connect(user1).expireOptionPosition(3);
-    await zdte.connect(user1).expireOptionPosition(4);
+    await zdte.connect(user1).expireLongOptionPosition(3);
+    await zdte.connect(user1).expireLongOptionPosition(4);
 
     await zdte.connect(user0).withdraw(false, (await baseLp.balanceOf(user0.address)));
     const postWithdrawBaseBalance = await weth.balanceOf(user0.address);
@@ -290,7 +298,7 @@ describe("Zdte", function() {
       "1000000000000000000",
       "150000000000", 
     ); // 1 $1500 put option
-    await expect(zdte.connect(user1).expireOptionPosition(6)).to.be.revertedWith("Position must be past expiry time");
+    await expect(zdte.connect(user1).expireLongOptionPosition(6)).to.be.revertedWith("Position must be past expiry time");
   });
 
 });
