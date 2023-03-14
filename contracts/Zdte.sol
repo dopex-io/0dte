@@ -69,10 +69,16 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         bool isOpen;
         // Is short
         bool isPut;
+        // Is spread
+        bool isSpread;
         // Open position count (in base asset)
         uint256 positions;
-        // Strike price
+        // strike price
         uint256 strike;
+        // Long strike price
+        uint256 longStrike;
+        // Short strike price
+        uint256 shortStrike;
         // Premium for position
         uint256 premium;
         // Fees for position
@@ -93,6 +99,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     // Long option position event
     event LongOptionPosition(uint256 id, uint256 amount, uint256 strike, address indexed user);
+
+    // Long option position event
+    event LongShortOptionPosition(uint256 id, uint256 amount, uint256 longStrike, uint256 shortStrike, address indexed user);
 
     // Expire option position event
     event ExpireOptionPosition(uint256 id, uint256 pnl, address indexed user);
@@ -185,41 +194,33 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         isEligibleSender
         returns (uint256 id)
     {
-        uint256 markPrice = getMarkPrice();
-        require(
-            (
-                (isPut && ((strike >= (markPrice * (100 - maxOtmPercentage) / 100)) && strike <= markPrice))
-                    || (!isPut && ((strike <= (markPrice * (100 + maxOtmPercentage) / 100)) && strike >= markPrice))
-            ) && strike % strikeIncrement == 0,
-            "Invalid strike"
-        );
+         if (isPut) {
+            validateShortStrike(strike);
+        } else {
+            validateLongStrike(strike);
+        }
 
-        // Calculate premium for ATM option in quote (1e6)
+        // Calculate premium for ATM opti   on in quote (1e6)
         uint256 premium = calcPremium(strike, amount, 1 days);
 
         // Calculate opening fees in quote (1e6)
-        uint256 openingFees = calcFees(amount * markPrice / AMOUNT_PRICE_TO_USDC_DECIMALS);
+        uint256 openingFees = calcOpeningFees(amount);
 
-        // We transfer premium + fees from user
-        quote.transferFrom(msg.sender, address(this), premium + openingFees);
+        // Transfer fees from user
+        quote.transferFrom(msg.sender, address(this), openingFees);
 
         if (isPut) {
-            require(quoteLp.totalAvailableAssets() >= (amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS), "Insufficient liquidity");
-            quoteLp.lockLiquidity(amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS);
+            lockPutLiquidity(amount, strike);
         } else {
-            require(baseLp.totalAvailableAssets() >= amount, "Insufficient liquidity");
-            baseLp.lockLiquidity(amount);
+            lockCallLiquidity(amount);
         }
 
         // Transfer fees to fee distributor
+        // Transfer premium from user
         if (isPut) {
-            quoteLp.deposit(openingFees, feeDistributor);
-            quoteLp.addProceeds(premium);
+            transferPutFees(openingFees, premium);
         } else {
-            uint256 basePremium = _swapExactIn(address(quote), address(base), premium);
-            uint256 baseOpeningFees = _swapExactIn(address(quote), address(base), openingFees);
-            baseLp.deposit(baseOpeningFees, feeDistributor);
-            baseLp.addProceeds(basePremium);
+            transferCallFees(openingFees, premium);
         }
 
         // Generate zdte position NFT
@@ -228,11 +229,14 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         zdtePositions[id] = ZdtePosition({
             isOpen: true,
             isPut: isPut,
+            isSpread: false,
             positions: amount,
             strike: strike,
             premium: premium,
             fees: openingFees,
             pnl: 0,
+            longStrike: 0,
+            shortStrike: 0,
             openedAt: block.timestamp,
             expiry: getCurrentExpiry()
         });
@@ -240,34 +244,80 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         emit LongOptionPosition(id, amount, strike, msg.sender);
     }
 
+    /// @notice Buys a zdte option
+    /// @param longStrike long strike
+    /// @param shortStrike short strike
+    /// @param amount Amount of options to long // 1e18
+    function longShortOptionPosition(uint256 amount, uint256 longStrike, uint256 shortStrike)
+        external
+        whenNotPaused
+        nonReentrant
+        isEligibleSender
+        returns (uint256 id)
+    {
+        validateLongStrike(longStrike);
+        validateShortStrike(shortStrike);
+       
+        // Calculate premium for ATM option in quote (1e6)
+        uint256 longPremium = calcPremium(longStrike, amount, 1 days);
+        uint256 shortPremium = calcPremium(shortStrike, amount, 1 days);
+
+        // Calculate opening fees in quote (1e6)
+        uint256 openingFees = calcOpeningFees(amount);
+
+        // Transfer fees from user
+        quote.transferFrom(msg.sender, address(this), openingFees);
+
+        lockPutLiquidity(amount, shortStrike);
+        lockCallLiquidity(amount);
+
+        // Transfer fees to fee distributor
+        // Transfer premium from user
+        transferPutFees(openingFees, shortPremium);
+        transferCallFees(openingFees, longPremium);
+
+        // Generate zdte position NFT
+        id = zdtePositionMinter.mint(msg.sender);
+
+        zdtePositions[id] = ZdtePosition({
+            isOpen: true,
+            isPut: false,
+            isSpread: true,
+            positions: amount,
+            strike: 0,
+            premium: shortPremium + longPremium,
+            fees: openingFees,
+            pnl: 0,
+            longStrike: longStrike,
+            shortStrike: shortStrike,
+            openedAt: block.timestamp,
+            expiry: getCurrentExpiry()
+        });
+
+        emit LongShortOptionPosition(id, amount, longStrike, shortStrike, msg.sender);
+    }
+
     /// @notice Expires an open option position
     /// @param id ID of position
     function expireOptionPosition(uint256 id) external {
         require(zdtePositions[id].isOpen, "Invalid position ID");
-
         require(zdtePositions[id].expiry <= block.timestamp, "Position must be past expiry time");
 
-        uint256 pnl = calcPnl(id);
+        uint256 pnlPut;
+        uint256 pnlCall;
 
-        if (pnl > 0) {
-            if (zdtePositions[id].isPut) {
-                quoteLp.unlockLiquidity(zdtePositions[id].strike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS);
-                quoteLp.subtractLoss(pnl);
-                quote.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
-            } else {
-                baseLp.unlockLiquidity(zdtePositions[id].positions);
-                baseLp.subtractLoss(pnl);
-                base.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
-            }
+        if (zdtePositions[id].isSpread) {
+            pnlPut = expirePutPosition(id);
+            pnlCall = expireCallPosition(id);
         } else if (zdtePositions[id].isPut) {
-            quoteLp.unlockLiquidity(zdtePositions[id].strike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS);
+            pnlPut = expirePutPosition(id);
         } else {
-            baseLp.unlockLiquidity(zdtePositions[id].positions);
+            pnlCall = expireCallPosition(id);
         }
 
         zdtePositions[id].isOpen = false;
 
-        emit ExpireOptionPosition(id, pnl, msg.sender);
+        emit ExpireOptionPosition(id, pnlPut + pnlCall, msg.sender);
     }
 
     /*==== INTERNAL METHODS ====*/
@@ -290,6 +340,75 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             })
         );
     }
+
+    function validateLongStrike(uint256 strike) internal view {
+        uint256 markPrice = getMarkPrice();
+        require(
+            (strike <= (markPrice * (100 + maxOtmPercentage) / 100)) && strike >= markPrice,
+            "Invalid long strike"
+        );
+        require(strike % strikeIncrement == 0, "Invalid long strike");
+    }
+
+    function validateShortStrike(uint256 strike) internal view {
+        uint256 markPrice = getMarkPrice();
+        require(
+            (strike >= (markPrice * (100 - maxOtmPercentage) / 100)) && strike <= markPrice,
+            "Invalid short strike"
+        );
+        require(strike % strikeIncrement == 0, "Invalid short strike");
+    }
+
+    function transferCallFees(uint256 openingFees, uint256 premium) internal {
+        uint256 basePremium = _swapExactIn(address(quote), address(base), premium);
+        uint256 baseOpeningFees = _swapExactIn(address(quote), address(base), openingFees);
+        baseLp.deposit(baseOpeningFees, feeDistributor);
+        baseLp.addProceeds(basePremium);
+        quote.transferFrom(msg.sender, address(this), premium);
+    }
+
+    function transferPutFees(uint256 openingFees, uint256 premium) internal {
+        quoteLp.deposit(openingFees, feeDistributor);
+        quoteLp.addProceeds(premium);
+        quote.transferFrom(msg.sender, address(this), premium);
+    }
+
+    function lockCallLiquidity(uint256 amount) internal {
+        require(baseLp.totalAvailableAssets() >= amount, "Insufficient call liquidity");
+        baseLp.lockLiquidity(amount);
+    }
+
+    function lockPutLiquidity(uint256 amount, uint256 strike) internal {
+        require(quoteLp.totalAvailableAssets() >= (amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS), "Insufficient put liquidity");
+        quoteLp.lockLiquidity(amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS);
+    }
+
+    function calcOpeningFees(uint256 amount) internal view returns (uint256 openingFees) {
+        return calcFees(amount * getMarkPrice() / AMOUNT_PRICE_TO_USDC_DECIMALS);
+    }
+
+    function expirePutPosition(uint256 id) internal returns(uint256 pnl) {
+        pnl = calcPnl(id);
+        if (pnl > 0) {
+            quoteLp.unlockLiquidity(zdtePositions[id].strike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS);
+            quoteLp.subtractLoss(pnl);
+            quote.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
+        } else {
+            quoteLp.unlockLiquidity(zdtePositions[id].strike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS);
+        }
+    }
+
+    function expireCallPosition(uint256 id) internal returns (uint256 pnl) {
+        pnl = calcPnl(id);
+        if (pnl > 0) {
+            baseLp.unlockLiquidity(zdtePositions[id].positions);
+            baseLp.subtractLoss(pnl);
+            base.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
+        } else {
+            baseLp.unlockLiquidity(zdtePositions[id].positions);
+        }
+    }
+    
 
     /*==== VIEWS ====*/
 
