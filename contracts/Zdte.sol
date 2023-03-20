@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
-
-import {IERC20} from "./interface/IERC20.sol";
-import {SafeERC20} from "./libraries/SafeERC20.sol";
+pragma solidity ^0.8.19;
 
 import {ZdteLP} from "./token/ZdteLP.sol";
 
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {ZdtePositionMinter} from "./positions/ZdtePositionMinter.sol";
 
-import {Pausable} from "./helpers/Pausable.sol";
+import {ContractWhitelist} from "./helpers/ContractWhitelist.sol";
 
 import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
@@ -21,13 +21,13 @@ import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 
 import "hardhat/console.sol";
 
-contract Zdte is Ownable, Pausable {
-    using SafeERC20 for IERC20;
+contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
+    using SafeERC20 for IERC20Metadata;
 
     // Base token
-    IERC20 public base;
+    IERC20Metadata public base;
     // Quote token
-    IERC20 public quote;
+    IERC20Metadata public quote;
     // zdte Base LP token
     ZdteLP public baseLp;
     // zdte Quotee LP token
@@ -49,7 +49,11 @@ contract Zdte is Ownable, Pausable {
     // Fees for opening position
     uint256 public feeOpenPosition = 5000000; // 0.05%
 
-    uint256 public constant divisor = 1e8;
+    uint256 public constant STRIKE_DECIMALS = 1e8;
+
+    uint256 internal constant AMOUNT_PRICE_TO_USDC_DECIMALS = (1e18 * 1e8) / 1e6;
+
+    uint256 public spreadMarginSafety = 30000; // 300%
 
     // Strike increments
     uint256 public strikeIncrement;
@@ -60,16 +64,25 @@ contract Zdte is Ownable, Pausable {
     // Genesis expiry timestamp, next day 8am gmt
     uint256 public genesisExpiry;
 
+    // base token liquidity
+    uint256 public baseLpTokenLiquidty;
+
+    // quote token liquidity
+    uint256 public quoteLpTokenLiquidty;
+
     // zdte positions
     mapping(uint256 => ZdtePosition) public zdtePositions;
+
+    enum PositionType {
+        LONG_PUT,
+        LONG_CALL,
+        SPREAD_PUT,
+        SPREAD_CALL
+    }
 
     struct ZdtePosition {
         // Is position open
         bool isOpen;
-        // Is short
-        bool isPut;
-        // Is spread
-        bool isSpread;
         // Open position count (in base asset)
         uint256 positions;
         // Long strike price
@@ -88,6 +101,8 @@ contract Zdte is Ownable, Pausable {
         uint256 openedAt;
         // Expiry timestamp
         uint256 expiry;
+        // Position type
+        PositionType positionType;
     }
 
     // Deposit event
@@ -99,13 +114,9 @@ contract Zdte is Ownable, Pausable {
     // Long option position event
     event LongOptionPosition(uint256 id, uint256 amount, uint256 strike, address indexed user);
 
-    // Spread option position event
+    // Long option position event
     event SpreadOptionPosition(
-        uint256 id, 
-        uint256 amount, 
-        uint256 longStrike, 
-        uint256 shortStrike, 
-        address indexed user
+        uint256 id, uint256 amount, uint256 longStrike, uint256 shortStrike, address indexed user
     );
 
     // Expire option position event
@@ -114,6 +125,11 @@ contract Zdte is Ownable, Pausable {
     // Expire spread position event
     event ExpireSpreadOptionPosition(uint256 id, uint256 pnl, address indexed user);
 
+    // Claim collateral
+    event ClaimCollateral(uint256 amount, address indexed sender);
+
+    /*==== CONSTRUCTOR ====*/
+
     constructor(
         address _base,
         address _quote,
@@ -121,9 +137,9 @@ contract Zdte is Ownable, Pausable {
         address _volatilityOracle,
         address _priceOracle,
         address _uniswapV3Router,
-        uint _strikeIncrement,
-        uint _maxOtmPercentage,
-        uint _genesisExpiry
+        uint256 _strikeIncrement,
+        uint256 _maxOtmPercentage,
+        uint256 _genesisExpiry
     ) {
         require(_base != address(0), "Invalid base token");
         require(_quote != address(0), "Invalid quote token");
@@ -135,8 +151,8 @@ contract Zdte is Ownable, Pausable {
         require(_maxOtmPercentage > 0, "Invalid max OTM %");
         require(_genesisExpiry > block.timestamp, "Invalid genesis expiry");
 
-        base = IERC20(_base);
-        quote = IERC20(_quote);
+        base = IERC20Metadata(_base);
+        quote = IERC20Metadata(_quote);
         optionPricing = IOptionPricing(_optionPricing);
         volatilityOracle = IVolatilityOracle(_volatilityOracle);
         priceOracle = IPriceOracle(_priceOracle);
@@ -144,7 +160,7 @@ contract Zdte is Ownable, Pausable {
 
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
-        genesisExpiry= _genesisExpiry;
+        genesisExpiry = _genesisExpiry;
 
         zdtePositionMinter = new ZdtePositionMinter();
 
@@ -158,129 +174,75 @@ contract Zdte is Ownable, Pausable {
         base.approve(address(baseLp), type(uint256).max);
     }
 
-    /// @notice Internal function to handle swaps using Uniswap V3 exactIn
-    /// @param from Address of the token to sell
-    /// @param to Address of the token to buy
-    /// @param amountOut Target amount of to token we want to receive
-    function _swapExactIn(
-        address from,
-        address to,
-        uint256 amountIn
-    ) internal returns (uint256 amountOut) {
-        return
-            uniswapV3Router.exactInputSingle(
-                IUniswapV3Router.ExactInputSingleParams({
-                    tokenIn: from,
-                    tokenOut: to,
-                    fee: 500,
-                    recipient: address(this),
-                    deadline: block.timestamp,
-                    amountIn: amountIn,
-                    amountOutMinimum: 0,
-                    sqrtPriceLimitX96: 0
-                })
-            );
-    }
+    /*==== USER METHODS ====*/
 
-    // Deposit assets
-    // @param isQuote If true user deposits quote token (else base)
-    // @param amount Amount of quote asset to deposit to LP
-    function deposit(bool isQuote, uint256 amount) public {
+    /// @notice Deposit assets
+    /// @param isQuote If true user deposits quote token (else base)
+    /// @param amount Amount of quote asset to deposit to LP
+    function deposit(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            quote.transferFrom(msg.sender, address(this), amount);
+            quoteLpTokenLiquidty += amount;
+            quote.safeTransferFrom(msg.sender, address(this), amount);
             quoteLp.deposit(amount, msg.sender);
         } else {
-            base.transferFrom(msg.sender, address(this), amount);
+            baseLpTokenLiquidty += amount;
+            base.safeTransferFrom(msg.sender, address(this), amount);
             baseLp.deposit(amount, msg.sender);
         }
         emit Deposit(isQuote, amount, msg.sender);
     }
 
-    // Withdraw
-    // @param isQuote If true user withdraws quote token (else base)
-    // @param amount Amount of LP positions to withdraw
-    function withdraw(bool isQuote, uint256 amount) public {
+    /// @notice Withdraw
+    /// @param isQuote If true user withdraws quote token (else base)
+    /// @param amount Amount of LP positions to withdraw
+    function withdraw(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
+            quoteLpTokenLiquidty -= amount;
             quoteLp.redeem(amount, msg.sender, msg.sender);
         } else {
+            baseLpTokenLiquidty -= amount;
             baseLp.redeem(amount, msg.sender, msg.sender);
         }
         emit Withdraw(isQuote, amount, msg.sender);
     }
 
     /// @notice Buys a zdte option
-    // @param isPut is put option
-    // @param amount Amount of options to long // 1e18
-    // @param strike Strike price // 1e8
-    function longOptionPosition(
-        bool isPut,
-        uint256 amount,
-        uint256 strike
-    ) public returns (uint256 id) {
-        uint256 markPrice = getMarkPrice();
-        require(
-            (
-                (
-                    isPut && 
-                    (
-                        (strike >= (markPrice * (100 - maxOtmPercentage) / 100)) &&
-                        strike <= markPrice
-                    )
-                ) ||
-                (
-                    !isPut && 
-                    (
-                        (strike <= (markPrice * (100 + maxOtmPercentage) / 100)) &&
-                        strike >= markPrice
-                    )
-                )
-            ) &&
-            strike % strikeIncrement == 0,
-            "Invalid strike"
-        );
+    /// @param isPut is put option
+    /// @param amount Amount of options to long // 1e18
+    /// @param strike Strike price // 1e8
+    function longOptionPosition(bool isPut, uint256 amount, uint256 strike)
+        external
+        whenNotPaused
+        nonReentrant
+        isEligibleSender
+        returns (uint256 id)
+    {
+        if (isPut) {
+            validateShortStrike(strike);
+        } else {
+            validateLongStrike(strike);
+        }
 
-        // Calculate premium for option in quote (1e6)
-        uint256 premium = calcPremium(
-            strike,
-            amount,
-            1 days
-        );
+        // Calculate premium for ATM option in quote (1e6)
+        uint256 premium = calcPremium(strike, amount, 1 days);
 
         // Calculate opening fees in quote (1e6)
-        uint256 openingFees = calcFees(amount * strike / 10 ** 20);
+        uint256 openingFees = calcOpeningFees(amount, strike);
 
-        // We transfer premium + fees from user
+        // Transfer fees from user
         quote.transferFrom(msg.sender, address(this), premium + openingFees);
 
         if (isPut) {
-            require(
-                quoteLp.totalAvailableAssets() >= (amount * strike / 10 ** 20), 
-                "Insufficient liquidity"
-            );
-            quoteLp.lockLiquidity(amount * strike / 10 ** 20);
+            lockPutLiquidity(amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS);
         } else {
-            require(baseLp.totalAvailableAssets() >= amount, "Insufficient liquidity");
-            baseLp.lockLiquidity(amount);
+            lockCallLiquidity(amount);
         }
 
-        // Transfer fees to fee distributor
+        // Transfer premium from user
         if (isPut) {
-            quoteLp.deposit(openingFees, feeDistributor);
-            quoteLp.addProceeds(premium);
+            transferPutFees(openingFees, premium);
         } else {
-            uint256 basePremium = _swapExactIn(
-                address(quote),
-                address(base),
-                premium
-            );
-
-            uint256 baseOpeningFees = _swapExactIn(
-                address(quote),
-                address(base),
-                openingFees
-            );
-            baseLp.deposit(baseOpeningFees, feeDistributor);
-            baseLp.addProceeds(basePremium);
+            transferCallFees(openingFees, premium);
         }
 
         // Generate zdte position NFT
@@ -288,8 +250,6 @@ contract Zdte is Ownable, Pausable {
 
         zdtePositions[id] = ZdtePosition({
             isOpen: true,
-            isPut: isPut,
-            isSpread: false,
             positions: amount,
             longStrike: strike,
             shortStrike: 0,
@@ -298,130 +258,67 @@ contract Zdte is Ownable, Pausable {
             fees: openingFees,
             pnl: 0,
             openedAt: block.timestamp,
-            expiry: getCurrentExpiry()
+            expiry: getCurrentExpiry(),
+            positionType: isPut ? PositionType.LONG_PUT : PositionType.LONG_CALL
         });
 
         emit LongOptionPosition(id, amount, strike, msg.sender);
     }
 
-    /// @notice Sets up a zdte spread option position
-    // @param isPut is put spread
-    // @param amount Amount of options to long // 1e18
-    // @param longStrike Long Strike price // 1e8
-    // @param shortStrike Short Strike price // 1e8
-    function spreadOptionPosition(
-        bool isPut,
-        uint256 amount,
-        uint256 longStrike,
-        uint256 shortStrike
-    ) public returns (uint256 id) {
+    /// @notice Buys a zdte option
+    /// @param isPut is put option
+    /// @param longStrike long strike
+    /// @param shortStrike short strike
+    /// @param amount Amount of options to long // 1e18
+    function spreadOptionPosition(bool isPut, uint256 amount, uint256 longStrike, uint256 shortStrike)
+        external
+        whenNotPaused
+        nonReentrant
+        isEligibleSender
+        returns (uint256 id)
+    {
+        if (isPut) {
+            validateShortStrike(longStrike);
+            validateShortStrike(shortStrike);
+            require(longStrike > shortStrike, "Invalid strike spread");
+        } else {
+            validateLongStrike(longStrike);
+            validateLongStrike(shortStrike);
+            require(longStrike < shortStrike, "Invalid strike spread");
+        }
+
+        // Calculate premium for ATM option in quote (1e6)
+        uint256 longPremium = calcPremium(longStrike, amount, 1 days);
+        uint256 shortPremium = calcPremium(shortStrike, amount, 1 days);
+
         uint256 markPrice = getMarkPrice();
-        require(
-            (
-                (
-                    isPut && 
-                    (
-                        (longStrike >= (markPrice * (100 - maxOtmPercentage) / 100)) &&
-                        longStrike <= markPrice
-                    ) &&
-                    longStrike > shortStrike
-                ) ||
-                (
-                    !isPut && 
-                    (
-                        (longStrike <= (markPrice * (100 + maxOtmPercentage) / 100)) &&
-                        longStrike >= markPrice
-                    ) &&
-                    longStrike < shortStrike
-                )
-            ) &&
-            longStrike % strikeIncrement == 0,
-            "Invalid long strike"
-        );
-        require(
-            (
-                (
-                    isPut && 
-                    (
-                        (shortStrike >= (markPrice * (100 - maxOtmPercentage) / 100)) &&
-                        shortStrike <= markPrice
-                    ) &&
-                    shortStrike < longStrike
-                ) ||
-                (
-                    !isPut && 
-                    (
-                        (shortStrike <= (markPrice * (100 + maxOtmPercentage) / 100)) &&
-                        shortStrike >= markPrice
-                    ) &&
-                    shortStrike > longStrike
-                )
-            ) &&
-            shortStrike % strikeIncrement == 0,
-            "Invalid short strike"
-        );
-
-        // Margin required = 
-        // call => (shortStrike - longStrike)/shortStrike - longPremium + shortPremium (in base)
-        // put  => (longStrike - shortStrike)/longStrike - longPremium + shortPremium (in quote)
-
-        // Calculate premium for long option in quote (1e6)
-        uint256 longPremium = calcPremium(
-            longStrike,
-            amount,
-            1 days
-        );
-
-        // Calculate premium for short option in quote (1e6)
-        uint256 shortPremium = calcPremium(
-            shortStrike,
-            amount,
-            1 days
-        );
 
         // Convert to base asset
         if (!isPut) {
             longPremium = longPremium / markPrice;
             shortPremium = shortPremium / markPrice;
         }
+
         // Calculate margin required for payouts
         uint256 margin = calcMargin(isPut, longStrike, shortStrike, longPremium, shortPremium) * amount;
 
         // Calculate opening fees in quote (1e6)
-        uint256 openingFees = calcFees(amount * (longStrike + shortStrike) / 10 ** 20);
+        uint256 openingFees = calcOpeningFees(amount, longStrike + shortStrike);
 
-        // We transfer premium + fees from user
+        // Transfer fees from user
         quote.transferFrom(msg.sender, address(this), longPremium + openingFees);
 
         if (isPut) {
-            require(
-                quoteLp.totalAvailableAssets() >= (margin / 10 ** 20), 
-                "Insufficient liquidity"
-            );
-            quoteLp.lockLiquidity(margin / 10 ** 20);
+            lockPutLiquidity(margin * spreadMarginSafety / 100 / AMOUNT_PRICE_TO_USDC_DECIMALS);
         } else {
-            require(baseLp.totalAvailableAssets() >= margin, "Insufficient liquidity");
-            baseLp.lockLiquidity(margin);
+            lockCallLiquidity(margin * spreadMarginSafety / 100);
         }
 
-        // Transfer fees to fee distributor
+        // Transfer premium from user
         if (isPut) {
-            quoteLp.deposit(openingFees, feeDistributor);
-            quoteLp.addProceeds(longPremium);
+            transferPutFees(openingFees, shortPremium);
         } else {
-            uint256 basePremium = _swapExactIn(
-                address(quote),
-                address(base),
-                longPremium
-            );
-
-            uint256 baseOpeningFees = _swapExactIn(
-                address(quote),
-                address(base),
-                openingFees
-            );
-            baseLp.deposit(baseOpeningFees, feeDistributor);
-            baseLp.addProceeds(longPremium);
+            transferCallFees(openingFees, longPremium);
         }
 
         // Generate zdte position NFT
@@ -429,8 +326,6 @@ contract Zdte is Ownable, Pausable {
 
         zdtePositions[id] = ZdtePosition({
             isOpen: true,
-            isPut: isPut,
-            isSpread: true,
             positions: amount,
             longStrike: longStrike,
             shortStrike: shortStrike,
@@ -439,127 +334,154 @@ contract Zdte is Ownable, Pausable {
             fees: openingFees,
             pnl: 0,
             openedAt: block.timestamp,
-            expiry: getCurrentExpiry()
+            expiry: getCurrentExpiry(),
+            positionType: isPut ? PositionType.SPREAD_PUT : PositionType.SPREAD_CALL
         });
 
         emit SpreadOptionPosition(id, amount, longStrike, shortStrike, msg.sender);
     }
 
-    /// @notice Expires an open long option position
+    /// @notice Expires an option position
     /// @param id ID of position
-    function expireLongOptionPosition(uint256 id) public {
-        require(zdtePositions[id].isOpen, "Invalid position ID");
-        require(!zdtePositions[id].isSpread, "Must be a long option position");
+    function expireOptionPosition(uint256 id) external whenNotPaused nonReentrant isEligibleSender {
+        canExpire(id);
 
-        require(
-            zdtePositions[id].expiry <= block.timestamp,
-            "Position must be past expiry time"
-        );
+        uint256 pnlPut;
+        uint256 pnlCall;
 
-        uint pnl = calcPnl(id);
+        ZdtePosition memory position = zdtePositions[id];
+        if (position.positionType == PositionType.LONG_PUT || position.positionType == PositionType.SPREAD_PUT) {
+            pnlPut = expirePutPosition(id);
+        } else {
+            pnlCall = expireCallPosition(id);
+        }
 
-        if (pnl > 0)
-            if (zdtePositions[id].isPut) {
-                quoteLp.unlockLiquidity(
-                    zdtePositions[id].longStrike * zdtePositions[id].positions / 10 ** 20
-                );
-                quoteLp.subtractLoss(pnl);
-                quote.transfer(
-                    IERC721(zdtePositionMinter).ownerOf(id),
-                    pnl
-                );
-            } else {
-                baseLp.unlockLiquidity(zdtePositions[id].positions);
-                baseLp.subtractLoss(pnl);
-                base.transfer(
-                    IERC721(zdtePositionMinter).ownerOf(id),
-                    pnl
-                );
-            }
-        else
-            if (zdtePositions[id].isPut) 
-                quoteLp.unlockLiquidity(
-                    zdtePositions[id].longStrike * zdtePositions[id].positions / 10 ** 20
-                );
-            else {
-                baseLp.unlockLiquidity(zdtePositions[id].positions);
-            }
-            
         zdtePositions[id].isOpen = false;
-        emit ExpireLongOptionPosition(id, pnl, msg.sender);
+        emit ExpireOptionPosition(id, pnlPut + pnlCall, msg.sender);
     }
 
-    /// @notice Expires an spread option position
+    /*==== INTERNAL METHODS ====*/
+
+    /// @notice Internal function to handle swaps using Uniswap V3 exactIn
+    /// @param from Address of the token to sell
+    /// @param to Address of the token to buy
+    /// @param amountOut Target amount of to token we want to receive
+    function _swapExactIn(address from, address to, uint256 amountIn) internal returns (uint256 amountOut) {
+        return uniswapV3Router.exactInputSingle(
+            IUniswapV3Router.ExactInputSingleParams({
+                tokenIn: from,
+                tokenOut: to,
+                fee: 500,
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            })
+        );
+    }
+
+    /// @notice Internal function to validate long strike
+    /// @param strike Strike price
+    function validateLongStrike(uint256 strike) internal view {
+        uint256 markPrice = getMarkPrice();
+        require((strike <= (markPrice * (100 + maxOtmPercentage) / 100)) && strike >= markPrice, "Invalid strike");
+        require(strike % strikeIncrement == 0, "Invalid strike");
+    }
+
+    /// @notice Internal function to validate short strike
+    /// @param strike Strike price
+    function validateShortStrike(uint256 strike) internal view {
+        uint256 markPrice = getMarkPrice();
+        require((strike >= (markPrice * (100 - maxOtmPercentage) / 100)) && strike <= markPrice, "Invalid strike");
+        require(strike % strikeIncrement == 0, "Invalid strike");
+    }
+
+    /// @notice Helper function to transfer call fees
+    /// @param openingFees Opening fees
+    /// @param premium Premium
+    function transferCallFees(uint256 openingFees, uint256 premium) internal {
+        uint256 basePremium = _swapExactIn(address(quote), address(base), premium);
+        uint256 baseOpeningFees = _swapExactIn(address(quote), address(base), openingFees);
+        baseLp.deposit(baseOpeningFees, feeDistributor);
+        baseLp.addProceeds(basePremium);
+    }
+
+    /// @notice Helper function to transfer put fees
+    /// @param openingFees Opening fees
+    /// @param premium Premium
+    function transferPutFees(uint256 openingFees, uint256 premium) internal {
+        quoteLp.deposit(openingFees, feeDistributor);
+        quoteLp.addProceeds(premium);
+    }
+
+    /// @notice Helper function to lock put liquidity
+    /// @param amount Amount of token
+    function lockPutLiquidity(uint256 amount) internal {
+        require(quoteLp.totalAvailableAssets() >= amount, "Insufficient put liquidity");
+        quoteLp.lockLiquidity(amount);
+    }
+
+    /// @notice Helper function to lock call liquidity
+    /// @param amount Amount of token
+    function lockCallLiquidity(uint256 amount) internal {
+        require(baseLp.totalAvailableAssets() >= amount, "Insufficient call liquidity");
+        baseLp.lockLiquidity(amount);
+    }
+
+    /// @notice Helper function to calculate opening fees
+    /// @param amount Amount of token
+    /// @param strike Strike price
+    function calcOpeningFees(uint256 amount, uint256 strike) public view returns (uint256 openingFees) {
+        return calcFees(amount * strike / AMOUNT_PRICE_TO_USDC_DECIMALS);
+    }
+
+    /// @notice Helper function to expire a put position
     /// @param id ID of position
-    function expireSpreadOptionPosition(uint256 id) public {
+    function expirePutPosition(uint256 id) internal returns (uint256 pnl) {
+        ZdtePosition memory position = zdtePositions[id];
+        uint256 unlock = position.positionType == PositionType.LONG_PUT
+            ? zdtePositions[id].longStrike * zdtePositions[id].positions / AMOUNT_PRICE_TO_USDC_DECIMALS
+            : calcMargin(id) / AMOUNT_PRICE_TO_USDC_DECIMALS;
+        pnl = calcPnl(id);
+        if (pnl > 0) {
+            quoteLp.unlockLiquidity(unlock);
+            quoteLp.subtractLoss(pnl);
+            quote.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
+        } else {
+            quoteLp.unlockLiquidity(unlock);
+        }
+    }
+
+    /// @notice Helper function to expire a call position
+    /// @param id ID of position
+    function expireCallPosition(uint256 id) internal returns (uint256 pnl) {
+        ZdtePosition memory position = zdtePositions[id];
+        uint256 unlock = position.positionType == PositionType.LONG_CALL
+            ? zdtePositions[id].positions
+            : calcMargin(id) / AMOUNT_PRICE_TO_USDC_DECIMALS;
+        pnl = calcPnl(id);
+        if (pnl > 0) {
+            baseLp.unlockLiquidity(unlock);
+            baseLp.subtractLoss(pnl);
+            base.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
+        } else {
+            baseLp.unlockLiquidity(unlock);
+        }
+    }
+
+    /// @notice Helper function to check if a position can be expired
+    /// @param id ID of position
+    function canExpire(uint256 id) internal view {
         require(zdtePositions[id].isOpen, "Invalid position ID");
-        require(zdtePositions[id].isSpread, "Must be a spread option position");
-
-        require(
-            zdtePositions[id].expiry <= block.timestamp,
-            "Position must be past expiry time"
-        );
-
-        uint pnl = calcPnl(id);
-        uint margin = calcMargin(
-            zdtePositions[id].isPut,
-            zdtePositions[id].longStrike,
-            zdtePositions[id].shortStrike,
-            zdtePositions[id].longPremium,
-            zdtePositions[id].shortPremium
-        );
-
-        if (pnl > 0)
-            if (zdtePositions[id].isPut) {
-                quoteLp.unlockLiquidity(
-                    margin / 10 ** 20
-                );
-                quoteLp.subtractLoss(pnl);
-                quote.transfer(
-                    IERC721(zdtePositionMinter).ownerOf(id),
-                    pnl
-                );
-            } else {
-                baseLp.unlockLiquidity(margin / 10 ** 20);
-                baseLp.subtractLoss(pnl);
-                base.transfer(
-                    IERC721(zdtePositionMinter).ownerOf(id),
-                    pnl
-                );
-            }
-        else
-            if (zdtePositions[id].isPut) 
-                quoteLp.unlockLiquidity(
-                    margin / 10 ** 20
-                );
-            else {
-                baseLp.unlockLiquidity(margin / 10 ** 20);
-            }
-            
-        zdtePositions[id].isOpen = false;
-        emit ExpireSpreadOptionPosition(id, pnl, msg.sender);
+        require(zdtePositions[id].expiry <= block.timestamp, "Position must be past expiry time");
     }
 
-    /// @notice Allow only zdte LP contract to claim collateral
-    /// @param amount Amount of quote/base assets to transfer
-    function claimCollateral(uint256 amount) public {
-        require(
-            msg.sender == address(quoteLp) || msg.sender == address(baseLp),
-            "Only zdte LP contract can claim collateral"
-        );
-        if (msg.sender == address(quoteLp)) 
-            quote.transfer(msg.sender, amount);
-        else if (msg.sender == address(baseLp))
-            base.transfer(msg.sender, amount);
-    }
+    /*==== VIEWS ====*/
 
     /// @notice External function to return the volatility
     /// @param strike Strike of option
-    function getVolatility(uint256 strike)
-        public
-        view
-        returns (uint256 volatility)
-    {
+    function getVolatility(uint256 strike) public view returns (uint256 volatility) {
         volatility = uint256(volatilityOracle.getVolatility(strike));
     }
 
@@ -571,21 +493,14 @@ contract Zdte is Ownable, Pausable {
         uint256 strike, // 1e8
         uint256 amount, // 1e18
         uint256 timeToExpiry
-    ) internal view returns (uint256 premium) {
+    ) public view returns (uint256 premium) {
         uint256 markPrice = getMarkPrice(); // 1e8
         uint256 expiry = block.timestamp + timeToExpiry;
-        premium = uint256(
-            optionPricing.getOptionPrice(
-                false,
-                expiry,
-                strike,
-                markPrice,
-                getVolatility(strike)
-            )
-        ) * amount; // ATM options: does not matter if call or put
+        premium =
+            uint256(optionPricing.getOptionPrice(false, expiry, strike, markPrice, getVolatility(strike))) * amount; // ATM options: does not matter if call or put
 
         // Convert to 6 decimal places (quote asset)
-        premium = premium / (10 ** 20);
+        premium = premium / (AMOUNT_PRICE_TO_USDC_DECIMALS);
     }
 
     /// @notice Internal function to calculate margin for a spread option position
@@ -611,39 +526,38 @@ contract Zdte is Ownable, Pausable {
     /// @notice Internal function to calculate fees
     /// @param amount Value of option in USD (ie6)
     function calcFees(uint256 amount) internal view returns (uint256 fees) {
-        fees = (amount * feeOpenPosition) / (100 * divisor);
+        fees = (amount * feeOpenPosition) / (100 * STRIKE_DECIMALS);
     }
 
-    /// @notice Internal function to calculate pnl
+    /// @notice Internal function to calculate margin for a spread option position
     /// @param id ID of position
-    /// @return pnl PNL in quote asset i.e USD (1e6)
-    function calcPnl(uint256 id) internal view returns (uint pnl) {
-        uint256 markPrice = getMarkPrice();
-        uint256 longStrike = zdtePositions[id].longStrike;
-        uint256 shortStrike = zdtePositions[id].shortStrike;
-        if (zdtePositions[id].isSpread) {
-            if (zdtePositions[id].isPut) {
-                pnl = longStrike > markPrice ? (zdtePositions[id].positions) *
-                    (longStrike - markPrice) /
-                    10**20 : 0;
-                pnl -= shortStrike > markPrice ? (zdtePositions[id].positions) *
-                    (shortStrike - markPrice) /
-                    10**20 : 0;
-            } else {
-                pnl = markPrice > longStrike ? (zdtePositions[id].positions *
-                    (markPrice - longStrike) / markPrice) : 0;
-                pnl -= markPrice > shortStrike ? (zdtePositions[id].positions *
-                    (markPrice - shortStrike) / markPrice) : 0;
-            }
-        } else {
-            if (zdtePositions[id].isPut)
-                pnl = longStrike > markPrice ? (zdtePositions[id].positions) *
-                    (longStrike - markPrice) /
-                    10**20 : 0;
-            else 
-                pnl = markPrice > longStrike ? (zdtePositions[id].positions *
-                    (markPrice - longStrike) / markPrice) : 0;
-        }
+    function calcMargin(uint256 id) internal view returns (uint256 margin) {
+        ZdtePosition memory position = zdtePositions[id];
+        margin = calcMargin(
+            position.positionType == PositionType.SPREAD_PUT,
+            position.longStrike,
+            position.shortStrike,
+            position.longPremium,
+            position.shortPremium
+        );
+    }
+
+    /// @notice Internal function to calculate margin for a spread option position
+    /// @param isPut is put option
+    /// @param longStrike Long strike price
+    /// @param shortStrike Short strike price
+    /// @param longPremium Long option premium
+    /// @param shortPremium Short option premium
+    function calcMargin(bool isPut, uint256 longStrike, uint256 shortStrike, uint256 longPremium, uint256 shortPremium)
+        public
+        pure
+        returns (uint256 margin)
+    {
+        margin = (
+            isPut ?
+            (longStrike - shortStrike) - longPremium + shortPremium :
+            ((shortStrike - longStrike)/ shortStrike) - longPremium + shortPremium
+        );
     }
 
     /// @notice Public function to retrieve price of base asset from oracle
@@ -654,10 +568,107 @@ contract Zdte is Ownable, Pausable {
 
     /// @notice Public function to return the next expiry timestamp
     function getCurrentExpiry() public view returns (uint256 expiry) {
-        if (block.timestamp > genesisExpiry)
+        if (block.timestamp > genesisExpiry) {
+            // Add one day to the current expiry
             expiry = genesisExpiry + ((((block.timestamp - genesisExpiry) / 1 days) + 1) * 1 days);
-        else
+        } else {
+            // Use the genesis expiry
             expiry = genesisExpiry;
+        }
     }
 
+    /// @notice Internal function to calculate pnl
+    /// @param id ID of position
+    /// @return pnl PNL in quote asset i.e USD (1e6)
+    function calcPnl(uint256 id) public view returns (uint256 pnl) {
+        uint256 markPrice = getMarkPrice();
+        uint256 longStrike = zdtePositions[id].longStrike;
+        uint256 shortStrike = zdtePositions[id].shortStrike;
+        uint256 positionCount = zdtePositions[id].positions;
+        PositionType positionType = zdtePositions[id].positionType;
+        if (positionType == PositionType.SPREAD_PUT) {
+            pnl = longStrike > markPrice ? positionCount * (longStrike - markPrice) / AMOUNT_PRICE_TO_USDC_DECIMALS : 0;
+            pnl -=
+                shortStrike > markPrice ? positionCount * (shortStrike - markPrice) / AMOUNT_PRICE_TO_USDC_DECIMALS : 0;
+        } else if (positionType == PositionType.SPREAD_CALL) {
+            pnl = markPrice > longStrike ? (positionCount * (markPrice - longStrike) / markPrice) : 0;
+            pnl -= markPrice > shortStrike ? (positionCount * (markPrice - shortStrike) / markPrice) : 0;
+        } else if (positionType == PositionType.LONG_PUT) {
+            pnl = longStrike > markPrice ? positionCount * (longStrike - markPrice) / AMOUNT_PRICE_TO_USDC_DECIMALS : 0;
+        } else if (positionType == PositionType.LONG_CALL) {
+            pnl = markPrice > longStrike ? (positionCount * (markPrice - longStrike) / markPrice) : 0;
+        } else {
+            revert("Invalid position type");
+        }
+    }
+
+    /*==== MANAGER METHODS ====*/
+
+    /// @notice Allow only zdte LP contract to claim collateral
+    /// @param amount Amount of quote/base assets to transfer
+    function claimCollateral(uint256 amount) external {
+        require(
+            msg.sender == address(quoteLp) || msg.sender == address(baseLp),
+            "Only zdte LP contract can claim collateral"
+        );
+        if (msg.sender == address(quoteLp)) {
+            quote.transfer(msg.sender, amount);
+        } else if (msg.sender == address(baseLp)) {
+            base.transfer(msg.sender, amount);
+        }
+        emit ClaimCollateral(amount, msg.sender);
+    }
+
+    /*==== ADMIN METHODS ====*/
+
+    /// @notice update margin of safety
+    /// @param _spreadMarginSafety New margin of safety
+    function updateMarginOfSafety(uint256 _spreadMarginSafety) external onlyOwner {
+        spreadMarginSafety = _spreadMarginSafety;
+    }
+
+    /// @notice Pauses the vault for emergency cases
+    /// @dev Can only be called by admin
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpauses the vault
+    /// @dev Can only be called by admin
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @notice Add a contract to the whitelist
+    /// @dev Can only be called by the owner
+    /// @param _contract Address of the contract that needs to be added to the whitelist
+    function addToContractWhitelist(address _contract) external onlyOwner {
+        _addToContractWhitelist(_contract);
+    }
+
+    /// @notice Remove a contract to the whitelist
+    /// @dev Can only be called by the owner
+    /// @param _contract Address of the contract that needs to be removed from the whitelist
+    function removeFromContractWhitelist(address _contract) external onlyOwner {
+        _removeFromContractWhitelist(_contract);
+    }
+
+    /// @notice Transfers all funds to msg.sender
+    /// @dev Can only be called by admin
+    /// @param tokens The list of erc20 tokens to withdraw
+    /// @param transferNative Whether should transfer the native currency
+    function emergencyWithdraw(address[] calldata tokens, bool transferNative) external onlyOwner whenPaused {
+        if (transferNative) {
+            payable(msg.sender).transfer(address(this).balance);
+        }
+
+        for (uint256 i; i < tokens.length;) {
+            IERC20Metadata token = IERC20Metadata(tokens[i]);
+            token.safeTransfer(msg.sender, token.balanceOf(address(this)));
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
 }

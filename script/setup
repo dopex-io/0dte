@@ -1,0 +1,90 @@
+#!/bin/sh
+
+set -euxo pipefail
+
+source .secrets
+
+# # 0xC44897c367EB1F25f9473A0d986b2EAF228C2715
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   "quoteLp()(address)"
+
+# # 0x52EeeD101Fab8eA64235480853fF19145bA1fB72
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   "baseLp()(address)"
+
+# cast send $usdcToken \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "approve(address,uint256)" \
+#   $zdte 1000000000000
+
+# cast send $ethToken \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "approve(address,uint256)" \
+#   $zdte 100000000000000000000000000000
+
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "deposit(bool,uint256)" \
+#   true $initialQuoteDeposit
+
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "deposit(bool,uint256)" \
+#   false $initialBaseDeposit
+
+# withdraws half
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+
+# # check price
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "getMarkPrice()" 
+
+# # update price
+# cast send $mockPriceOraclePuts \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "updatePrice(uint256)" \
+#   160000000000
+
+# # check price
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "getMarkPrice()" 
+
+# # # long call
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "longOptionPosition(bool,uint256,uint256)" \
+#   false $ETHER 160000000000
+
+# # long put
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "longOptionPosition(bool,uint256,uint256)" \
+#   true $ETHER 160000000000
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "zdtePositions(uint256)(bool,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,uint256)" \
+#   0
+
+# withdraw
+cast send $zdte \
+  --rpc-url $ARB_GOERLI_RPC_URL \
+  --private-key $ADMIN_PK \
+  "withdraw(bool,uint256)" \
+  true $ETHER

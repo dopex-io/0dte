@@ -1,0 +1,15 @@
+#!/bin/sh
+
+source .secrets
+
+forge script src/scripts/Deploy.s.sol:DeployScript \
+  --fork-url $ARB_GOERLI_RPC_URL  \
+  --private-key $ADMIN_PK \
+  --broadcast \
+  --verify \
+  --retries 10 \
+  --delay 10 \
+  --etherscan-api-key $ETHERSCAN_KEY -vvvv
+
+# forge verify-contract $ssovPut SsovV4Put --chain-id 421613 --watch
+# forge verify-contract --verifier sourcify --chain-id 421613 $ssovPut SsovV4Put

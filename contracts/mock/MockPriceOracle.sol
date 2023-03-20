@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 
 contract MockPriceOracle {
-    uint lastPrice = 1000 * 10 ** 8;
+    uint256 lastPrice = 1000 * 10 ** 8;
 
     function getUnderlyingPrice() external returns (uint256) {
         return lastPrice;
     }
 
-    function updateUnderlyingPrice(uint price) external {
+    function updateUnderlyingPrice(uint256 price) external {
         lastPrice = price;
     }
 }
