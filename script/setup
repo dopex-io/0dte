@@ -30,13 +30,13 @@ source .secrets
 #   --rpc-url $ARB_GOERLI_RPC_URL \
 #   --private-key $ADMIN_PK \
 #   "deposit(bool,uint256)" \
-#   true $initialQuoteDeposit
+#   true 1000000000
 
 # cast send $zdte \
 #   --rpc-url $ARB_GOERLI_RPC_URL \
 #   --private-key $ADMIN_PK \
 #   "deposit(bool,uint256)" \
-#   false $initialBaseDeposit
+#   false 42000000000000000000
 
 # withdraws half
 # cast send $zdte \
@@ -62,29 +62,34 @@ source .secrets
 #   --private-key $ADMIN_PK \
 #   "getMarkPrice()" 
 
-# # # long call
-# cast send $zdte \
-#   --rpc-url $ARB_GOERLI_RPC_URL \
-#   --private-key $ADMIN_PK \
-#   "longOptionPosition(bool,uint256,uint256)" \
-#   false $ETHER 160000000000
+# long call
+cast send $zdte \
+  --rpc-url $ARB_GOERLI_RPC_URL \
+  --private-key $ADMIN_PK \
+  "longOptionPosition(bool,uint256,uint256)" \
+  false 1300000000000000000 160000000000
 
-# # long put
+# long put
 # cast send $zdte \
 #   --rpc-url $ARB_GOERLI_RPC_URL \
 #   --private-key $ADMIN_PK \
 #   "longOptionPosition(bool,uint256,uint256)" \
-#   true $ETHER 160000000000
+#   true 13000000000000000000 160000000000
+
+cast call $zdte \
+  --rpc-url $ARB_GOERLI_RPC_URL \
+  --private-key $ADMIN_PK \
+  "zdtePositions(uint256)(bool,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,uint256)" \
+  0
+
+# # withdraw
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "withdraw(bool,uint256)" \
+#   true $ETHER
 
 # cast call $zdte \
 #   --rpc-url $ARB_GOERLI_RPC_URL \
 #   --private-key $ADMIN_PK \
-#   "zdtePositions(uint256)(bool,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,uint256)" \
-#   0
-
-# withdraw
-cast send $zdte \
-  --rpc-url $ARB_GOERLI_RPC_URL \
-  --private-key $ADMIN_PK \
-  "withdraw(bool,uint256)" \
-  true $ETHER
+#   "base()(address)"

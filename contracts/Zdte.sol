@@ -120,10 +120,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     );
 
     // Expire option position event
-    event ExpireLongOptionPosition(uint256 id, uint256 pnl, address indexed user);
-
-    // Expire spread position event
-    event ExpireSpreadOptionPosition(uint256 id, uint256 pnl, address indexed user);
+    event ExpireOptionPosition(uint256 id, uint256 pnl, address indexed user);
 
     // Claim collateral
     event ClaimCollateral(uint256 amount, address indexed sender);
@@ -518,7 +515,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     ) internal view returns (uint256 margin) {
         margin = (
             isPut ?
-            ((longStrike - shortStrike)/ longStrike) - longPremium + shortPremium :
+            (longStrike - shortStrike) - longPremium + shortPremium :
             ((shortStrike - longStrike)/ shortStrike) - longPremium + shortPremium
         );
     }
@@ -539,24 +536,6 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             position.shortStrike,
             position.longPremium,
             position.shortPremium
-        );
-    }
-
-    /// @notice Internal function to calculate margin for a spread option position
-    /// @param isPut is put option
-    /// @param longStrike Long strike price
-    /// @param shortStrike Short strike price
-    /// @param longPremium Long option premium
-    /// @param shortPremium Short option premium
-    function calcMargin(bool isPut, uint256 longStrike, uint256 shortStrike, uint256 longPremium, uint256 shortPremium)
-        public
-        pure
-        returns (uint256 margin)
-    {
-        margin = (
-            isPut ?
-            (longStrike - shortStrike) - longPremium + shortPremium :
-            ((shortStrike - longStrike)/ shortStrike) - longPremium + shortPremium
         );
     }
 

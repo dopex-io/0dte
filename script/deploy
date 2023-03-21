@@ -2,7 +2,7 @@
 
 source .secrets
 
-forge script src/scripts/Deploy.s.sol:DeployScript \
+forge script script/Deploy.s.sol:DeployScript \
   --fork-url $ARB_GOERLI_RPC_URL  \
   --private-key $ADMIN_PK \
   --broadcast \
