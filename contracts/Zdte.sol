@@ -221,7 +221,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         }
 
         // Calculate premium for ATM option in quote (1e6)
-        uint256 premium = calcPremium(strike, amount, 1 days);
+        uint256 premium = calcPremium(isPut, strike, amount, 1 days);
 
         // Calculate opening fees in quote (1e6)
         uint256 openingFees = calcOpeningFees(amount, strike);
@@ -285,8 +285,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         }
 
         // Calculate premium for ATM option in quote (1e6)
-        uint256 longPremium = calcPremium(longStrike, amount, 1 days);
-        uint256 shortPremium = calcPremium(shortStrike, amount, 1 days);
+        uint256 longPremium = calcPremium(isPut, longStrike, amount, 1 days);
+        uint256 shortPremium = calcPremium(isPut, shortStrike, amount, 1 days);
 
         uint256 markPrice = getMarkPrice();
 
@@ -306,9 +306,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         quote.transferFrom(msg.sender, address(this), longPremium + openingFees);
 
         if (isPut) {
-            lockPutLiquidity(margin * spreadMarginSafety / 100 / AMOUNT_PRICE_TO_USDC_DECIMALS);
+            lockPutLiquidity(margin * spreadMarginSafety / AMOUNT_PRICE_TO_USDC_DECIMALS);
         } else {
-            lockCallLiquidity(margin * spreadMarginSafety / 100);
+            lockCallLiquidity(margin * spreadMarginSafety);
         }
 
         // Transfer premium from user
@@ -414,16 +414,38 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @notice Helper function to lock put liquidity
     /// @param amount Amount of token
-    function lockPutLiquidity(uint256 amount) internal {
+    function lockPutLiquidity(uint256 amount) internal returns (bool) {
         require(quoteLp.totalAvailableAssets() >= amount, "Insufficient put liquidity");
         quoteLp.lockLiquidity(amount);
+        return true;
     }
 
     /// @notice Helper function to lock call liquidity
     /// @param amount Amount of token
-    function lockCallLiquidity(uint256 amount) internal {
+    function lockCallLiquidity(uint256 amount) internal returns (bool) {
         require(baseLp.totalAvailableAssets() >= amount, "Insufficient call liquidity");
         baseLp.lockLiquidity(amount);
+        return true;
+    }
+
+    function canOpenSpreadPosition(bool isPut, uint256 amount, uint256 longStrike, uint256 shortStrike) external returns (bool) {
+        // Calculate premium for ATM option in quote (1e6)
+        uint256 longPremium = calcPremium(isPut, longStrike, amount, 1 days);
+        uint256 shortPremium = calcPremium(isPut, shortStrike, amount, 1 days);
+
+        uint256 markPrice = getMarkPrice();
+
+        // Convert to base asset
+        if (!isPut) {
+            longPremium = longPremium / markPrice;
+            shortPremium = shortPremium / markPrice;
+        }
+
+        uint256 margin = calcMargin(isPut, longStrike, shortStrike, longPremium, shortPremium) * amount;
+
+        return isPut ?
+            lockPutLiquidity(margin * spreadMarginSafety / AMOUNT_PRICE_TO_USDC_DECIMALS) : 
+            lockCallLiquidity(margin * spreadMarginSafety);
     }
 
     /// @notice Helper function to calculate opening fees
@@ -483,10 +505,12 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     }
 
     /// @notice Internal function to calculate premium in quote
+    /// @param isPut if calc premium for put
     /// @param strike Strike of option
     /// @param amount Amount of option
     /// @param timeToExpiry Time to expiry in seconds
     function calcPremium(
+        bool isPut,
         uint256 strike, // 1e8
         uint256 amount, // 1e18
         uint256 timeToExpiry
@@ -494,7 +518,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 markPrice = getMarkPrice(); // 1e8
         uint256 expiry = block.timestamp + timeToExpiry;
         premium =
-            uint256(optionPricing.getOptionPrice(false, expiry, strike, markPrice, getVolatility(strike))) * amount; // ATM options: does not matter if call or put
+            uint256(optionPricing.getOptionPrice(isPut, expiry, strike, markPrice, getVolatility(strike))) * amount; // ATM options: does not matter if call or put
 
         // Convert to 6 decimal places (quote asset)
         premium = premium / (AMOUNT_PRICE_TO_USDC_DECIMALS);
@@ -570,12 +594,12 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             pnl -=
                 shortStrike > markPrice ? positionCount * (shortStrike - markPrice) / AMOUNT_PRICE_TO_USDC_DECIMALS : 0;
         } else if (positionType == PositionType.SPREAD_CALL) {
-            pnl = markPrice > longStrike ? (positionCount * (markPrice - longStrike) / markPrice) : 0;
-            pnl -= markPrice > shortStrike ? (positionCount * (markPrice - shortStrike) / markPrice) : 0;
+            pnl = markPrice > longStrike ? (positionCount * (markPrice - longStrike) / markPrice / 1 ether) : 0;
+            pnl -= markPrice > shortStrike ? (positionCount * (markPrice - shortStrike) / markPrice / 1 ether) : 0;
         } else if (positionType == PositionType.LONG_PUT) {
             pnl = longStrike > markPrice ? positionCount * (longStrike - markPrice) / AMOUNT_PRICE_TO_USDC_DECIMALS : 0;
         } else if (positionType == PositionType.LONG_CALL) {
-            pnl = markPrice > longStrike ? (positionCount * (markPrice - longStrike) / markPrice) : 0;
+            pnl = markPrice > longStrike ? (positionCount * (markPrice - longStrike) / markPrice / 1 ether) : 0;
         } else {
             revert("Invalid position type");
         }

@@ -37,14 +37,6 @@ describe("Zdte", function () {
     return (nextNoon.getTime() / 1000).toString();
   };
 
-  const getNextExpiryTimestamp = () => {
-    const nextNoon = new Date();
-    if (nextNoon.getHours() >= 12) 
-      nextNoon.setDate(nextNoon.getDate() + 1);
-    nextNoon.setHours(12, 0, 0, 0);
-    return (nextNoon.getTime() / 1000).toString();
-  }
-
   before(async () => {
     signers = await ethers.getSigners();
     owner = signers[0];
@@ -195,7 +187,7 @@ describe("Zdte", function () {
 
     await priceOracle.updateUnderlyingPrice("165000000000"); // $1650
     await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(0);
+    await zdte.connect(user1).expireOptionPosition(0);
 
     quoteBalance = await usdc.balanceOf(user1.address);
     baseBalance = await weth.balanceOf(user1.address);
@@ -220,7 +212,7 @@ describe("Zdte", function () {
 
     await priceOracle.updateUnderlyingPrice("155000000000"); // $1550
     await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(1);
+    await zdte.connect(user1).expireOptionPosition(1);
 
     let postExpireQuoteBalance = await usdc.balanceOf(user1.address);
     let pnl = postExpireQuoteBalance.sub(preExpireQuoteBalance);
@@ -238,7 +230,7 @@ describe("Zdte", function () {
       .connect(user1)
       .longOptionPosition(true, "10000000000000000000", "160000000000"); // 10 $1600 put option
     await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(2);
+    await zdte.connect(user1).expireOptionPosition(2);
 
     await zdte
       .connect(user0)
@@ -273,8 +265,8 @@ describe("Zdte", function () {
       .connect(user1)
       .longOptionPosition(false, "10000000000000000000", "160000000000"); // 5 $1600 call option
     await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(3);
-    await zdte.connect(user1).expireLongOptionPosition(4);
+    await zdte.connect(user1).expireOptionPosition(3);
+    await zdte.connect(user1).expireOptionPosition(4);
 
     await zdte
       .connect(user0)
