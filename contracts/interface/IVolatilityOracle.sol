@@ -2,5 +2,9 @@
 pragma solidity ^0.8.0;
 
 interface IVolatilityOracle {
-    function getVolatility(uint256) external view returns (uint256);
+    function getVolatility(
+        bytes32 _id,
+        uint256 _expiry,
+        uint256 _strike
+    ) external view returns (uint256);
 }

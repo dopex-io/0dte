@@ -1,0 +1,23 @@
+#!/bin/sh
+
+source .secrets
+# source .fake_secrets
+
+forge script script/Deploy.s.sol:DeployScript \
+  --fork-url $REAL_ARB_RPC_URL  \
+  --private-key $REAL_ADMIN_PK \
+  --broadcast \
+  --verify \
+  --verifier-url $REAL_VERIFIER_URL \
+  --etherscan-api-key $ETHERSCAN_API_KEY
+
+# forge verify-contract \
+#     --chain-id $CHAIN_ID \
+#     --num-of-optimizations 200 \
+#     --etherscan-api-key $ETHERSCAN_API_KEY \
+#     --watch \
+#     --constructor-args \
+#     $(cast abi-encode "constructor(address,address,address,address,address,address,uint256,uint256,uint256)" \
+#      "$ETH" "$USDC" "$OPTION_PRICING" "$VOLATILITY" "$PRICE_ORACLE" "$UNISWAP_V3_FACTORY" "$STRIKE_INCREMENT" "$OTM_PCT" "$EXPIRY") \
+#     ${ZDTE} \
+#     contracts/Zdte.sol:Zdte

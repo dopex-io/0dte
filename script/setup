@@ -1,0 +1,223 @@
+#!/bin/sh
+
+# set -euxo pipefail
+
+source .secrets
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "getCurrentExpiry()(uint)" 
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "getTimeToExpire()(uint)" 
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "getVolatility(uint)(uint)" \
+#   185000000000
+
+cast call $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  "calcPremium(bool,uint,uint)(uint)" \
+  false 200000000000 $ETHER
+
+# getOptionPrice(bool isPut, uint256 expiry, uint256 strike, uint256 lastPrice, uint256 baseIv)
+
+# cast send $USDC \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "approve(address,uint)" \
+#   $ZDTE $MAX_UINT
+
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "deposit(bool,uint256)" \
+#   false 50000000000000000
+
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "spreadOptionPosition(bool,uint256,uint256,uint256)" \
+#   false 50000000000000000 185000000000 190000000000
+
+# cast send $UNISWAP_V3_FACTORY \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))(uint)" \
+#   "($USDC,$ETH,500,$REAL_ADMIN,1680508800,159688,0,0)"
+
+# cast call $ETH \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "balanceOf(address)(uint256)" \
+#   $REAL_ADMIN
+
+# 78947368421052630
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcMargin(bool,uint,uint)(uint)" \
+#   false 185000000000 190000000000
+
+# 159688
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcPremium(bool,uint,uint,uint)(uint)" \
+#   false 185000000000 $ETHER 86400
+
+# 1875000
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcOpeningFees(uint,uint)(uint)" \
+#   375000000000 $ETHER
+
+#  = 2030000
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "canOpenSpreadPosition(bool,uint,uint,uint)(bool)" \
+#   false 10000 185000000000 190000000000
+
+# # 100000000000000000
+# cast call $BASE_LP \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "totalAvailableAssets()(uint)"
+
+# cast send $USDC \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "approve(address,uint)" \
+#   $ZDTE 0
+
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "emergencyWithdraw(address[],bool)" \
+#   [$USDC] false
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "baseLp()(address)"
+
+# "updatePrices((address,uint256,uint256)[])" "[(ADDR,100,200),(ADDR,300,400)]"
+# cast call 0x912CE59144191C1204E64559FE8253a0e49E6548 \
+#   --rpc-url $ARBITRUM_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "symbol()"
+
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "deposit(bool,uint256)" \
+#   true $initialQuoteDeposit
+
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "deposit(bool,uint256)" \
+#   false $initialBaseDeposit
+
+# withdraws half
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+
+# # check price
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "getMarkPrice()" 
+
+# # update price
+# cast send $mockPriceOraclePuts \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "updatePrice(uint256)" \
+#   160000000000
+
+# # check price
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "getMarkPrice()" 
+
+# # long call
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "longOptionPosition(bool,uint256,uint256)" \
+#   false 1300000000000000000 160000000000
+
+# long >= current, long < short => isCall
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "spreadOptionPosition(bool,uint256,uint256,uint256)" \
+#   false $ether 170000000000 175000000000
+
+# # success
+# long <= current, long > short, => isPut
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "spreadOptionPosition(bool,uint256,uint256,uint256)" \
+#   true $ether 155000000000 150000000000
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "zdtePositions(uint256)(bool,bool,bool,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,uint256)" \
+#   0
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "zdtePositions(uint256)(bool,bool,bool,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,uint256)" \
+#   1
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "getMargin(bool,uint256,uint256,uint256)(uint256)" \
+#   false $ether 180000000000 185000000000
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "canOpenSpreadPosition(bool,uint256,uint256,uint256)(bool)" \
+#   false $ether 160000000000 170000000000
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "getMargin(bool,uint256,uint256,uint256)(uint256)" \
+#   true $ether 155000000000 145000000000
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "canOpenSpreadPosition(bool,uint256,uint256,uint256)(bool)" \
+#   true $ether 155000000000 145000000000
+
+# # withdraw
+# cast send $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "withdraw(bool,uint256)" \
+#   true $ETHER
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "quoteLpTokenLiquidty()(uint256)"
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "baseLpTokenLiquidty()(uint256)"
+
+# cast send $mockPriceOraclePuts \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   --private-key $ADMIN_PK \
+#   "updatePrice(uint256)" \
+#   171600000000

@@ -2,13 +2,13 @@
 pragma solidity ^0.8.9;
 
 contract MockPriceOracle {
-    uint lastPrice = 1000 * 10 ** 8;
+    uint256 lastPrice = 1000 * 10 ** 8;
 
     function getUnderlyingPrice() external returns (uint256) {
         return lastPrice;
     }
 
-    function updateUnderlyingPrice(uint price) external {
+    function updateUnderlyingPrice(uint256 price) external {
         lastPrice = price;
     }
 }
