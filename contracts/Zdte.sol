@@ -80,6 +80,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     // zdte positions
     mapping(uint256 => ZdtePosition) public zdtePositions;
 
+    // expiry to info
+    mapping(uint256 => ExpiryInfo) public expiryInfo;
+
     struct ZdtePosition {
         // Is position open
         bool isOpen;
@@ -109,6 +112,13 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 margin;
     }
 
+    struct ExpiryInfo {
+        bool begin;
+        uint256 expiry;
+        uint256 startId;
+        uint256 count;
+    }
+
     // Deposit event
     event Deposit(bool isQuote, uint256 amount, address indexed sender);
 
@@ -127,7 +137,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     event ExpireLongOptionPosition(uint256 id, uint256 pnl, address indexed user);
 
     // Expire spread position event
-    event ExpireSpreadOptionPosition(uint256 id, uint256 pnl, address indexed user);
+    event SpreadOptionPositionExpired(uint256 id, uint256 pnl, address indexed user);
 
     constructor(
         address _base,
@@ -190,6 +200,17 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                 sqrtPriceLimitX96: 0
             })
         );
+    }
+
+    /// @notice Internal function to record expiry info
+    /// @param positionId Position ID
+    function _recordExpiryInfo(uint256 positionId) internal {
+        uint256 expiry = getCurrentExpiry();
+        if (!expiryInfo[expiry].begin) {
+            expiryInfo[expiry] = ExpiryInfo({expiry: expiry, begin: true, startId: positionId, count: 1});
+        } else {
+            expiryInfo[expiry].count++;
+        }
     }
 
     // Deposit assets
@@ -344,7 +365,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         // Calculate premium for short option in quote (1e6)
         uint256 shortPremium = calcPremium(isPut, shortStrike, amount);
 
-        uint256 premium = isPut ? longPremium - shortPremium : shortPremium - longPremium;
+        uint256 premium = longPremium - shortPremium;
         require(premium > 0, "Premium must be greater than 0");
 
         // Calculate margin required for payouts
@@ -394,6 +415,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             margin: margin
         });
 
+        _recordExpiryInfo(id);
+
         emit SpreadOptionPosition(id, amount, longStrike, shortStrike, msg.sender);
     }
 
@@ -435,7 +458,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @notice Expires an spread option position
     /// @param id ID of position
-    function expireSpreadOptionPosition(uint256 id) external whenNotPaused nonReentrant isEligibleSender {
+    function expireSpreadOptionPosition(uint256 id) public whenNotPaused nonReentrant isEligibleSender {
         require(zdtePositions[id].isOpen, "Invalid position ID");
         require(zdtePositions[id].isSpread, "Must be a spread option position");
 
@@ -461,7 +484,25 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         }
 
         zdtePositions[id].isOpen = false;
-        emit ExpireSpreadOptionPosition(id, pnl, msg.sender);
+        emit SpreadOptionPositionExpired(id, pnl, msg.sender);
+    }
+
+    function keeperExpirePrevEpochSpreads() public whenNotPaused nonReentrant isEligibleSender returns (bool) {
+        uint256 prevExpiry = getPrevExpiry();
+        require(keeperExpireSpreads(prevExpiry), "keeper failed to expire spreads");
+        return true;
+    }
+
+    function keeperExpireSpreads(uint256 expiry) public whenNotPaused nonReentrant isEligibleSender returns (bool) {
+        ExpiryInfo memory info = expiryInfo[expiry];
+        uint256 startId = info.startId;
+        uint256 endId = info.startId + info.count;
+        for (uint256 i = startId; i < endId; i++) {
+            if (zdtePositions[i].isOpen && zdtePositions[i].isSpread) {
+                expireSpreadOptionPosition(i);
+            }
+        }
+        return true;
     }
 
     /// @notice Allow only zdte LP contract to claim collateral
@@ -480,15 +521,21 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @notice External function to return the volatility
     /// @param strike Strike of option
-    function getVolatility(uint256 strike) public view returns (uint256 volatility) {
-        volatility = uint256(volatilityOracle.getVolatility(oracleId, getCurrentExpiry(), strike));
+    function getVolatility(bool isPut, uint256 strike) public view returns (uint256 volatility) {
+        bytes32 _oracleId = isPut ? keccak256("ETH-USD-PUTS") : keccak256("ETH-USD-CALLS");
+        volatility = uint256(volatilityOracle.getVolatility(_oracleId, getCurrentExpiry(), strike));
     }
 
     /// @notice External function to return the volatility
     /// @param strike Strike of option
     /// @param expiry Expiry of option
-    function getVolatility(uint256 strike, uint256 expiry) public view returns (uint256 volatility) {
-        volatility = uint256(volatilityOracle.getVolatility(oracleId, expiry, strike));
+    function getVolatilityWithExpiry(bool isPut, uint256 strike, uint256 expiry)
+        public
+        view
+        returns (uint256 volatility)
+    {
+        bytes32 _oracleId = isPut ? keccak256("ETH-USD-PUTS") : keccak256("ETH-USD-CALLS");
+        volatility = uint256(volatilityOracle.getVolatility(_oracleId, expiry, strike));
     }
 
     /// @notice External function to validate spread position
@@ -517,7 +564,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     ) public view returns (uint256 premium) {
         uint256 markPrice = getMarkPrice(); // 1e8
         premium = uint256(
-            optionPricing.getOptionPrice(isPut, getCurrentExpiry(), strike, markPrice, getVolatility(strike))
+            optionPricing.getOptionPrice(isPut, getCurrentExpiry(), strike, markPrice, getVolatility(isPut, strike))
         ) * amount; // ATM options: does not matter if call or put
         // Convert to 6 decimal places (quote asset)
         premium = premium / AMOUNT_PRICE_TO_USDC_DECIMALS;
@@ -599,6 +646,15 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             expiry = genesisExpiry + ((((block.timestamp - genesisExpiry) / 1 days) + 1) * 1 days);
         } else {
             expiry = genesisExpiry;
+        }
+    }
+
+    /// @notice Public function to return the prev expiry timestamp
+    function getPrevExpiry() public view returns (uint256 expiry) {
+        if (getCurrentExpiry() == genesisExpiry) {
+            expiry = 0;
+        } else {
+            expiry = getCurrentExpiry() - 1 days;
         }
     }
 
