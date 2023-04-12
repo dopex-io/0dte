@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# set -euxo pipefail
+
+source .secrets
+
+# cast send $USDC \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "approve(address,uint)" \
+#   $ZDTE $MAX_UINT
+
+# cast send $ETH \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "approve(address,uint)" \
+#   $ZDTE $MAX_UINT
+
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "deposit(bool,uint256)" \
+#   false $POINT_ONE_ETHER
+
+cast send $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "deposit(bool,uint256)" \
+  true 100000000

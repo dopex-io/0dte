@@ -4,7 +4,8 @@
 
 source .secrets
 
-# cast call $ZDTE \
+# ORACLE_ID=$(cast )
+# cast call $VOLATILITY \
 #   --rpc-url $REAL_ARB_RPC_URL \
 #   "getCurrentExpiry()(uint)" 
 
@@ -14,21 +15,28 @@ source .secrets
 
 # cast call $ZDTE \
 #   --rpc-url $REAL_ARB_RPC_URL \
-#   "getVolatility(uint)(uint)" \
-#   185000000000
+#   "getVolatility(bool,uint)(uint)" \
+#   false 200000000000
 
-cast call $ZDTE \
-  --rpc-url $REAL_ARB_RPC_URL \
-  "calcPremium(bool,uint,uint)(uint)" \
-  false 200000000000 $ETHER
-
-# getOptionPrice(bool isPut, uint256 expiry, uint256 strike, uint256 lastPrice, uint256 baseIv)
-
-# cast send $USDC \
+# cast call $ZDTE \
 #   --rpc-url $REAL_ARB_RPC_URL \
-#   --private-key $REAL_ADMIN_PK \
-#   "approve(address,uint)" \
-#   $ZDTE $MAX_UINT
+#   "getVolatility(bool,uint)(uint)" \
+#   false 210000000000
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "getVolatility(bool,uint)(uint)" \
+#   true 1850000000000
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcPremium(bool,uint,uint)(uint)" \
+#   false 210000000000 $ETHER
+
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcPremium(bool,uint,uint)(uint)" \
+#   true 210000000000 $ETHER
 
 # cast send $ZDTE \
 #   --rpc-url $REAL_ARB_RPC_URL \
@@ -36,11 +44,24 @@ cast call $ZDTE \
 #   "deposit(bool,uint256)" \
 #   false 50000000000000000
 
+# # cast 4byte 0xb009dcac
+# # longPremium
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcPremium(bool,uint,uint)(uint)" \
+#   false $TWO_K_TEN $ETHER
+
+# # shortPremium
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "calcPremium(bool,uint,uint)(uint)" \
+#   false $TWO_K $ETHER
+
 # cast send $ZDTE \
 #   --rpc-url $REAL_ARB_RPC_URL \
 #   --private-key $REAL_ADMIN_PK \
 #   "spreadOptionPosition(bool,uint256,uint256,uint256)" \
-#   false 50000000000000000 185000000000 190000000000
+#   false $POINT_ONE_ETHER $TWO_K $TWO_K_TEN
 
 # cast send $UNISWAP_V3_FACTORY \
 #   --rpc-url $REAL_ARB_RPC_URL \
@@ -60,10 +81,7 @@ cast call $ZDTE \
 #   false 185000000000 190000000000
 
 # 159688
-# cast call $ZDTE \
-#   --rpc-url $REAL_ARB_RPC_URL \
-#   "calcPremium(bool,uint,uint,uint)(uint)" \
-#   false 185000000000 $ETHER 86400
+
 
 # 1875000
 # cast call $ZDTE \
@@ -89,12 +107,6 @@ cast call $ZDTE \
 #   "approve(address,uint)" \
 #   $ZDTE 0
 
-# cast send $ZDTE \
-#   --rpc-url $REAL_ARB_RPC_URL \
-#   --private-key $REAL_ADMIN_PK \
-#   "emergencyWithdraw(address[],bool)" \
-#   [$USDC] false
-
 # cast call $ZDTE \
 #   --rpc-url $REAL_ARB_RPC_URL \
 #   "baseLp()(address)"
@@ -105,11 +117,6 @@ cast call $ZDTE \
 #   --private-key $ADMIN_PK \
 #   "symbol()"
 
-# cast send $zdte \
-#   --rpc-url $ARB_GOERLI_RPC_URL \
-#   --private-key $ADMIN_PK \
-#   "deposit(bool,uint256)" \
-#   true $initialQuoteDeposit
 
 # cast send $zdte \
 #   --rpc-url $ARB_GOERLI_RPC_URL \

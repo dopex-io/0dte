@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# set -euxo pipefail
+
+source .secrets
+
+prev=$(cast call $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  "getPrevExpiry()" | cast to-dec)
+echo $prev
+
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "keeperExpirePrevEpochSpreads()"
+
+cast send $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "keeperExpireSpreads(uint)(bool)" \
+  $prev

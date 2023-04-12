@@ -1,0 +1,22 @@
+#!/bin/sh
+
+# set -euxo pipefail
+
+source .secrets
+
+cast send $WITHDRAW_ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "pause()"
+
+cast send $WITHDRAW_ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "emergencyWithdraw(address[],bool)" \
+  [$ETH] false
+
+cast send $WITHDRAW_ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "emergencyWithdraw(address[],bool)" \
+  [$USDC] false

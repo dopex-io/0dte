@@ -487,13 +487,13 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }
 
-    function keeperExpirePrevEpochSpreads() public whenNotPaused nonReentrant isEligibleSender returns (bool) {
+    function keeperExpirePrevEpochSpreads() public whenNotPaused isEligibleSender returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         require(keeperExpireSpreads(prevExpiry), "keeper failed to expire spreads");
         return true;
     }
 
-    function keeperExpireSpreads(uint256 expiry) public whenNotPaused nonReentrant isEligibleSender returns (bool) {
+    function keeperExpireSpreads(uint256 expiry) public whenNotPaused isEligibleSender returns (bool) {
         ExpiryInfo memory info = expiryInfo[expiry];
         uint256 startId = info.startId;
         uint256 endId = info.startId + info.count;
