@@ -1,8 +1,18 @@
 #!/bin/sh
 
-# set -euxo pipefail
+set -e
 
 source .secrets
+
+cast call $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  "getVolatility(uint)(uint)" \
+  $TWO_K
+
+cast call $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  "getVolatility(uint)(uint)" \
+  $TWO_K_FIVE
 
 cast send $ZDTE \
   --rpc-url $REAL_ARB_RPC_URL \
