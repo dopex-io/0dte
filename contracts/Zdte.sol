@@ -41,10 +41,12 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     IPriceOracle public priceOracle;
     // zdte position minter
     ZdtePositionMinter public zdtePositionMinter;
-    // Fee distributor
-    address public feeDistributor;
     // Uniswap V3 router
     IUniswapV3Router public uniswapV3Router;
+    // Fee distributor
+    address public feeDistributor;
+    // Keeper address
+    address public keeper;
 
     // Fees for opening position
     uint256 public feeOpenPosition = 5000000; // 0.05%
@@ -57,37 +59,47 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     uint256 public spreadMarginSafety = 300; // 300%
 
-    uint256 internal constant AMOUNT_PRICE_TO_USD_DECIMALS = 1e20;
+    uint256 public MIN_LONG_STRIKE_VOL_ADJUST = 5; // 5%
 
-    uint256 public MIN_LONGSTRIKEVOL_ADJUST = 5; //5%
-    uint256 public MAX_LONGSTRIKEVOL_ADJUST = 30; //30%
+    uint256 public MAX_LONG_STRIKE_VOL_ADJUST = 30; // 30%
 
-    // Strike increments
+    uint256 internal LP_TIMELOCK = 1 days;
+
+    /// @dev Expire delay tolerance
+    uint256 public EXPIRY_DELAY_TOLERANCE = 5 minutes;
+
+    /// @dev Strike increments
     uint256 public strikeIncrement;
 
-    // Max OTM % from mark price
+    /// @dev Max OTM % from mark price
     uint256 public maxOtmPercentage;
 
-    // Genesis expiry timestamp, next day 8am gmt
+    /// @dev Genesis expiry timestamp, next day 8am gmt
     uint256 public genesisExpiry;
 
-    // base token liquidity
+    /// @dev base token liquidity
     uint256 public baseLpTokenLiquidty;
 
-    // quote token liquidity
+    /// @dev quote token liquidity
     uint256 public quoteLpTokenLiquidty;
 
-    // oracle ID
+    /// @dev oracle ID
     bytes32 public oracleId = keccak256("ETH-USD-ZDTE");
 
-    // zdte positions
+    /// @dev zdte positions
     mapping(uint256 => ZdtePosition) public zdtePositions;
 
-    // expiry to info
+    /// @dev expiry to info
     mapping(uint256 => ExpiryInfo) public expiryInfo;
 
-    // expiry to settlement price
+    /// @dev expiry to settlement price
     mapping(uint256 => uint256) public expiryToSettlementPrice;
+
+    /// @dev User to base balance to timestamp
+    mapping(address => DepositInfo[]) userToBaseDepositInfo;
+
+    /// @dev User to quote balance to timestamp
+    mapping(address => DepositInfo[]) userToQuoteDepositInfo;
 
     struct ZdtePosition {
         // Is position open
@@ -126,22 +138,21 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 count;
     }
 
+    struct DepositInfo {
+        uint256 amount;
+        uint256 expiry;
+    }
+
     // Deposit event
     event Deposit(bool isQuote, uint256 amount, address indexed sender);
 
     // Withdraw event
     event Withdraw(bool isQuote, uint256 amount, address indexed sender);
 
-    // Long option position event
-    event LongOptionPosition(uint256 id, uint256 amount, uint256 strike, address indexed user);
-
     // Spread option position event
     event SpreadOptionPosition(
         uint256 id, uint256 amount, uint256 longStrike, uint256 shortStrike, address indexed user
     );
-
-    // Expire option position event
-    event ExpireLongOptionPosition(uint256 id, uint256 pnl, address indexed user);
 
     // Expire spread position event
     event SpreadOptionPositionExpired(uint256 id, uint256 pnl, address indexed user);
@@ -152,6 +163,12 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     // Set settlement price event
     event SettlementPriceSaved(uint256 expiry, uint256 settlementPrice);
 
+    // Get logs on when keeper ran
+    event KeeperRan(uint256 jobDoneTime);
+
+    // Keeper assigned to
+    event KeeperAssigned(address keeper);
+
     constructor(
         address _base,
         address _quote,
@@ -159,6 +176,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         address _volatilityOracle,
         address _priceOracle,
         address _uniswapV3Router,
+        address _feeDistributor,
+        address _keeper,
         uint256 _strikeIncrement,
         uint256 _maxOtmPercentage,
         uint256 _genesisExpiry
@@ -168,6 +187,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         require(_optionPricing != address(0), "Invalid option pricing");
         require(_volatilityOracle != address(0), "Invalid volatility oracle");
         require(_priceOracle != address(0), "Invalid price oracle");
+        require(_uniswapV3Router != address(0), "Invalid router");
+        require(_feeDistributor != address(0), "Invalid fee distributor");
+        require(_keeper != address(0), "Invalid keeper");
 
         require(_strikeIncrement > 0, "Invalid strike increment");
         require(_maxOtmPercentage > 0, "Invalid max OTM %");
@@ -179,6 +201,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         volatilityOracle = IVolatilityOracle(_volatilityOracle);
         priceOracle = IPriceOracle(_priceOracle);
         uniswapV3Router = IUniswapV3Router(_uniswapV3Router);
+
+        feeDistributor = _feeDistributor;
+        keeper = _keeper;
 
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
@@ -215,32 +240,74 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         );
     }
 
-    /// @notice Internal function to record expiry info
-    /// @param positionId Position ID
-    function _recordExpiryInfo(uint256 positionId) internal {
-        uint256 expiry = getCurrentExpiry();
-        if (!expiryInfo[expiry].begin) {
-            expiryInfo[expiry] =
-                ExpiryInfo({expiry: expiry, begin: true, expired: false, startId: positionId, count: 1});
-        } else {
-            expiryInfo[expiry].count++;
-        }
-    }
-
-    // Deposit assets
+    // @notice Deposit assets
     // @param isQuote If true user deposits quote token (else base)
     // @param amount Amount of quote asset to deposit to LP
     function deposit(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
             quoteLpTokenLiquidty += amount;
+            userToQuoteDepositInfo[msg.sender].push(
+                DepositInfo({amount: amount, expiry: block.timestamp + LP_TIMELOCK})
+            );
             quote.transferFrom(msg.sender, address(this), amount);
             quoteLp.deposit(amount, msg.sender);
         } else {
             baseLpTokenLiquidty += amount;
+            userToBaseDepositInfo[msg.sender].push(DepositInfo({amount: amount, expiry: block.timestamp + LP_TIMELOCK}));
             base.transferFrom(msg.sender, address(this), amount);
             baseLp.deposit(amount, msg.sender);
         }
         emit Deposit(isQuote, amount, msg.sender);
+    }
+
+    // @notice withdraw assets
+    // @param amount Amount of assets to withdraw
+    function quoteWithdrawal(uint256 withdrawalAmount) internal returns (bool) {
+        require(withdrawalAmount > 0, "Invalid withdrawal amount");
+        uint256 quoteDepositLength = userToQuoteDepositInfo[msg.sender].length;
+        for (uint256 i = 0; i < quoteDepositLength; i++) {
+            DepositInfo memory depositInfo = userToQuoteDepositInfo[msg.sender][i];
+            if (depositInfo.expiry <= block.timestamp) {
+                if (depositInfo.amount > withdrawalAmount) {
+                    quoteLpTokenLiquidty -= withdrawalAmount;
+                    quoteLp.redeem(withdrawalAmount, msg.sender, msg.sender);
+                    userToQuoteDepositInfo[msg.sender][i].amount -= withdrawalAmount;
+                } else {
+                    withdrawalAmount -= depositInfo.amount;
+                    quoteLpTokenLiquidty -= depositInfo.amount;
+                    quoteLp.redeem(depositInfo.amount, msg.sender, msg.sender);
+                    userToQuoteDepositInfo[msg.sender][i].amount = 0;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // @notice withdraw assets
+    // @param amount Amount of assets to withdraw
+    function baseWithdrawal(uint256 withdrawalAmount) internal returns (bool) {
+        require(withdrawalAmount > 0, "Invalid withdrawal amount");
+        uint256 baseDepositLength = userToBaseDepositInfo[msg.sender].length;
+        for (uint256 i = 0; i < baseDepositLength; i++) {
+            DepositInfo memory depositInfo = userToBaseDepositInfo[msg.sender][i];
+            if (depositInfo.expiry <= block.timestamp) {
+                if (depositInfo.amount > withdrawalAmount) {
+                    baseLpTokenLiquidty -= withdrawalAmount;
+                    baseLp.redeem(withdrawalAmount, msg.sender, msg.sender);
+                    userToBaseDepositInfo[msg.sender][i].amount -= withdrawalAmount;
+                } else {
+                    withdrawalAmount -= depositInfo.amount;
+                    baseLpTokenLiquidty -= depositInfo.amount;
+                    baseLp.redeem(depositInfo.amount, msg.sender, msg.sender);
+                    userToBaseDepositInfo[msg.sender][i].amount = 0;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Withdraw
@@ -248,86 +315,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     // @param amount Amount of LP positions to withdraw
     function withdraw(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            quoteLpTokenLiquidty -= amount;
-            quoteLp.redeem(amount, msg.sender, msg.sender);
+            quoteWithdrawal(amount);
         } else {
-            baseLpTokenLiquidty -= amount;
-            baseLp.redeem(amount, msg.sender, msg.sender);
+            baseWithdrawal(amount);
         }
         emit Withdraw(isQuote, amount, msg.sender);
-    }
-
-    /// @notice Buys a zdte option
-    // @param isPut is put option
-    // @param amount Amount of options to long // 1e18
-    // @param strike Strike price // 1e8
-    function longOptionPosition(bool isPut, uint256 amount, uint256 strike)
-        external
-        whenNotPaused
-        nonReentrant
-        isEligibleSender
-        returns (uint256 id)
-    {
-        uint256 markPrice = getMarkPrice();
-        require(
-            (
-                (isPut && ((strike >= ((markPrice * (100 - maxOtmPercentage)) / 100)) && strike <= markPrice))
-                    || (!isPut && ((strike <= ((markPrice * (100 + maxOtmPercentage)) / 100)) && strike >= markPrice))
-            ) && strike % strikeIncrement == 0,
-            "Invalid strike"
-        );
-
-        // Calculate premium for option in quote (1e6)
-        uint256 premium = calcPremium(isPut, strike, amount);
-
-        // Calculate opening fees in quote (1e6)
-        uint256 openingFees = calcFees((amount * strike) / AMOUNT_PRICE_TO_USD_DECIMALS);
-
-        // We transfer premium + fees from user
-        quote.transferFrom(msg.sender, address(this), premium + openingFees);
-
-        if (isPut) {
-            require(
-                quoteLp.totalAvailableAssets() >= ((amount * strike) / AMOUNT_PRICE_TO_USD_DECIMALS),
-                "Insufficient liquidity"
-            );
-            quoteLp.lockLiquidity((amount * strike) / AMOUNT_PRICE_TO_USD_DECIMALS);
-        } else {
-            require(baseLp.totalAvailableAssets() >= amount, "Insufficient liquidity");
-            baseLp.lockLiquidity(amount);
-        }
-
-        // Transfer fees to fee distributor
-        if (isPut) {
-            quoteLp.deposit(openingFees, feeDistributor);
-            quoteLp.addProceeds(premium);
-        } else {
-            uint256 basePremium = _swapExactIn(address(quote), address(base), premium);
-            uint256 baseOpeningFees = _swapExactIn(address(quote), address(base), openingFees);
-            baseLp.deposit(baseOpeningFees, feeDistributor);
-            baseLp.addProceeds(basePremium);
-        }
-
-        // Generate zdte position NFT
-        id = zdtePositionMinter.mint(msg.sender);
-
-        zdtePositions[id] = ZdtePosition({
-            isOpen: true,
-            isPut: isPut,
-            isSpread: false,
-            positions: amount,
-            longStrike: strike,
-            shortStrike: 0,
-            longPremium: premium,
-            shortPremium: 0,
-            fees: openingFees,
-            pnl: 0,
-            openedAt: block.timestamp,
-            expiry: getCurrentExpiry(),
-            margin: 0
-        });
-
-        emit LongOptionPosition(id, amount, strike, msg.sender);
     }
 
     /// @notice Sets up a zdte spread option position
@@ -391,8 +383,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         // Calculate premium for long option in quote (1e6)
         uint256 vol = getVolatility(longStrike);
         // Adjust longStrikeVol in function of utilisation
-        vol = vol + (vol * MIN_LONGSTRIKEVOL_ADJUST) / 100
-            + (vol * utilisation * (MAX_LONGSTRIKEVOL_ADJUST - MIN_LONGSTRIKEVOL_ADJUST)) / (100 * 10000);
+        vol = vol + (vol * MIN_LONG_STRIKE_VOL_ADJUST) / 100
+            + (vol * utilisation * (MAX_LONG_STRIKE_VOL_ADJUST - MIN_LONG_STRIKE_VOL_ADJUST)) / (100 * 10000);
         uint256 longPremium = calcPremiumWithVol(isPut, markPrice, longStrike, vol, amount);
 
         // Calculate premium for short option in quote (1e6)
@@ -404,7 +396,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         require(premium > 0, "Premium must be greater than 0");
 
         // Calculate opening fees in quote (1e6)
-        uint256 openingFees = calcFees((amount * (longStrike + shortStrike)) / AMOUNT_PRICE_TO_USD_DECIMALS);
+        uint256 openingFees = calcFees((amount * (longStrike + shortStrike)) / AMOUNT_PRICE_TO_USDC_DECIMALS);
 
         // We transfer premium + fees from user
         quote.transferFrom(msg.sender, address(this), premium + openingFees);
@@ -439,45 +431,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             margin: margin
         });
 
-        _recordExpiryInfo(id);
+        _recordSpreadCount(id);
 
         emit SpreadOptionPosition(id, amount, longStrike, shortStrike, msg.sender);
-    }
-
-    /// @notice Expires an open long option position
-    /// @param id ID of position
-    function expireLongOptionPosition(uint256 id) external whenNotPaused nonReentrant isEligibleSender {
-        require(zdtePositions[id].isOpen, "Invalid position ID");
-        require(!zdtePositions[id].isSpread, "Must be a long option position");
-
-        require(zdtePositions[id].expiry <= block.timestamp, "Position must be past expiry time");
-
-        uint256 pnl = calcPnl(id);
-
-        if (pnl > 0) {
-            if (zdtePositions[id].isPut) {
-                quoteLp.unlockLiquidity(
-                    (zdtePositions[id].longStrike * zdtePositions[id].positions) / AMOUNT_PRICE_TO_USD_DECIMALS
-                );
-                quoteLp.subtractLoss(pnl);
-                quote.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
-            } else {
-                baseLp.unlockLiquidity(zdtePositions[id].positions);
-                baseLp.subtractLoss(pnl);
-                base.transfer(IERC721(zdtePositionMinter).ownerOf(id), pnl);
-            }
-        } else if (zdtePositions[id].isPut) {
-            quoteLp.unlockLiquidity(
-                (zdtePositions[id].longStrike * zdtePositions[id].positions) / AMOUNT_PRICE_TO_USD_DECIMALS
-            );
-        } else {
-            baseLp.unlockLiquidity(zdtePositions[id].positions);
-        }
-
-        zdtePositions[id].isOpen = false;
-        zdtePositionMinter.burn(id);
-
-        emit ExpireLongOptionPosition(id, pnl, msg.sender);
     }
 
     /// @notice Expires an spread option position
@@ -511,30 +467,55 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }
 
+    /// @notice assign keeper
+    /// @param _keeper address of keeper
+    function assignKeeperRole(address _keeper) external onlyOwner returns (bool) {
+        keeper = _keeper;
+        emit KeeperAssigned(_keeper);
+        return true;
+    }
+
+    /// @notice save settlement price and expire prev epochs
+    function keeperRun() external whenNotPaused onlyKeeperOrAdmin returns (bool) {
+        require(keeperSaveSettlementPrice(), "Failed to save settlement price");
+        require(keeperExpirePrevEpochSpreads(), "Fail to expire prev epochs");
+        emit KeeperRan(block.timestamp);
+        return true;
+    }
+
     /// @notice Helper function for keeper to save settlement price
-    function keeperSaveSettlementPrice() external whenNotPaused onlyOwner {
-        saveSettlementPrice(getPrevExpiry(), getMarkPrice());
+    function keeperSaveSettlementPrice() public whenNotPaused onlyKeeperOrAdmin returns (bool) {
+        uint256 prevExpiry = getPrevExpiry();
+        require(block.timestamp < prevExpiry + EXPIRY_DELAY_TOLERANCE, "Expiry is past tolerance");
+        return saveSettlementPrice(prevExpiry, getMarkPrice());
     }
 
     /// @notice Helper function set settlement price at expiry
     /// @param expiry Expiry to set settlement price
     /// @param settlementPrice Settlement price
-    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice) public whenNotPaused onlyOwner {
+    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice)
+        public
+        whenNotPaused
+        onlyKeeperOrAdmin
+        returns (bool)
+    {
+        require(expiry < block.timestamp, "Expiry must be in the past");
         require(expiryToSettlementPrice[expiry] == 0, "Settlement price saved");
         expiryToSettlementPrice[expiry] = settlementPrice;
         emit SettlementPriceSaved(expiry, settlementPrice);
+        return true;
     }
 
     /// @notice Helper function expire prev epoch
-    function keeperExpirePrevEpochSpreads() public whenNotPaused isEligibleSender returns (bool) {
+    function keeperExpirePrevEpochSpreads() public whenNotPaused onlyKeeperOrAdmin returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
-        require(keeperExpireSpreads(prevExpiry), "keeper failed to expire spreads");
+        require(expireSpreads(prevExpiry), "keeper failed to expire spreads");
         return true;
     }
 
     /// @notice Helper function expire prev epoch
     /// @param expiry Expiry to expire
-    function keeperExpireSpreads(uint256 expiry) public whenNotPaused isEligibleSender returns (bool) {
+    function expireSpreads(uint256 expiry) public whenNotPaused onlyKeeperOrAdmin returns (bool) {
         require(expiryToSettlementPrice[expiry] != 0, "Settlement price not saved");
         ExpiryInfo memory info = expiryInfo[expiry];
         if (info.count == 0 || info.expired) {
@@ -630,7 +611,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 strike, // 1e8
         uint256 amount // 1e18
     ) public view returns (uint256 premium) {
-        return calcFees((amount * strike) / AMOUNT_PRICE_TO_USD_DECIMALS);
+        return calcFees((amount * strike) / AMOUNT_PRICE_TO_USDC_DECIMALS);
     }
 
     /// @notice Internal function to calculate margin for a spread option position
@@ -683,6 +664,18 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                     ? ((zdtePositions[id].positions * (markPrice - longStrike)) / markPrice / 1 ether)
                     : 0;
             }
+        }
+    }
+
+    /// @notice Internal function to record expiry info
+    /// @param positionId Position ID
+    function _recordSpreadCount(uint256 positionId) internal {
+        uint256 expiry = getCurrentExpiry();
+        if (!expiryInfo[expiry].begin) {
+            expiryInfo[expiry] =
+                ExpiryInfo({expiry: expiry, begin: true, expired: false, startId: positionId, count: 1});
+        } else {
+            expiryInfo[expiry].count++;
         }
     }
 
@@ -765,5 +758,10 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                 ++i;
             }
         }
+    }
+
+    modifier onlyKeeperOrAdmin() {
+        require(msg.sender == keeper || msg.sender == owner(), "Sender must be the keeper or admin");
+        _;
     }
 }

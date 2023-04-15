@@ -21,6 +21,8 @@ contract DeployScript is Script {
             _volatilityOracle: vm.envAddress("VOLATILITY"),
             _priceOracle: vm.envAddress("PRICE_ORACLE"),
             _uniswapV3Router: vm.envAddress("ROUTER"),
+            _feeDistributor: vm.envAddress("FEE_DISTRIBUTOR"),
+            _keeper: vm.envAddress("KEEPER"),
             _strikeIncrement: vm.envUint("STRIKE_INCREMENT"),
             _maxOtmPercentage: vm.envUint("OTM_PCT"),
             _genesisExpiry: vm.envUint("EXPIRY")

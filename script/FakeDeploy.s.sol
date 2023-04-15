@@ -21,6 +21,8 @@ contract FakeDeployScript is Script {
           0x43dA03eF7C69B40e151f7de88dF75ff935c8776A,
           0xef84Ce91Bd262CA8Bfd7484ec4e192c07230c73C,
           0x260019BF63A233aE5d6145e609DC8B35e48FD5A4,
+          0x9d16d832dD97eD9684DaE9CD30234bB7028EBfDf,
+          0x9d16d832dD97eD9684DaE9CD30234bB7028EBfDf,
           50e8,
           10,
           0

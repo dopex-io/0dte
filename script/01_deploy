@@ -18,6 +18,6 @@ forge script script/Deploy.s.sol:DeployScript \
 #     --verifier-url $REAL_VERIFIER_URL \
 #     --watch \
 #     --constructor-args \
-#     $(cast abi-encode "constructor(address,address,address,address,address,address,uint256,uint256,uint256)" \
-#      "$ETH" "$USDC" "$OPTION_PRICING" "$VOLATILITY" "$PRICE_ORACLE" "$ROUTER" "$STRIKE_INCREMENT" "$OTM_PCT" "$EXPIRY") \
+#     $(cast abi-encode "constructor(address,address,address,address,address,address,address,address,uint256,uint256,uint256)" \
+#      "$ETH" "$USDC" "$OPTION_PRICING" "$VOLATILITY" "$PRICE_ORACLE" "$ROUTER" "$FEE_DISTRIBUTOR" "$KEEPER" "$STRIKE_INCREMENT" "$OTM_PCT" "$EXPIRY") \
 #     $ZDTE contracts/Zdte.sol:Zdte
