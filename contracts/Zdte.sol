@@ -86,6 +86,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     // expiry to info
     mapping(uint256 => ExpiryInfo) public expiryInfo;
 
+    // expiry to settlement price
+    mapping(uint256 => uint256) public expiryToSettlementPrice;
+
     struct ZdtePosition {
         // Is position open
         bool isOpen;
@@ -117,6 +120,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     struct ExpiryInfo {
         bool begin;
+        bool expired;
         uint256 expiry;
         uint256 startId;
         uint256 count;
@@ -144,6 +148,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     // Keeper expire long option position event
     event KeeperExpireSpreads(uint256 expiry, address indexed user);
+
+    // Set settlement price event
+    event SettlementPriceSaved(uint256 expiry, uint256 settlementPrice);
 
     constructor(
         address _base,
@@ -213,7 +220,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     function _recordExpiryInfo(uint256 positionId) internal {
         uint256 expiry = getCurrentExpiry();
         if (!expiryInfo[expiry].begin) {
-            expiryInfo[expiry] = ExpiryInfo({expiry: expiry, begin: true, startId: positionId, count: 1});
+            expiryInfo[expiry] =
+                ExpiryInfo({expiry: expiry, begin: true, expired: false, startId: positionId, count: 1});
         } else {
             expiryInfo[expiry].count++;
         }
@@ -503,15 +511,33 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }
 
+    /// @notice Helper function for keeper to save settlement price
+    function keeperSaveSettlementPrice() external whenNotPaused onlyOwner {
+        saveSettlementPrice(getPrevExpiry(), getMarkPrice());
+    }
+
+    /// @notice Helper function set settlement price at expiry
+    /// @param expiry Expiry to set settlement price
+    /// @param settlementPrice Settlement price
+    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice) public whenNotPaused onlyOwner {
+        require(expiryToSettlementPrice[expiry] == 0, "Settlement price saved");
+        expiryToSettlementPrice[expiry] = settlementPrice;
+        emit SettlementPriceSaved(expiry, settlementPrice);
+    }
+
+    /// @notice Helper function expire prev epoch
     function keeperExpirePrevEpochSpreads() public whenNotPaused isEligibleSender returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         require(keeperExpireSpreads(prevExpiry), "keeper failed to expire spreads");
         return true;
     }
 
+    /// @notice Helper function expire prev epoch
+    /// @param expiry Expiry to expire
     function keeperExpireSpreads(uint256 expiry) public whenNotPaused isEligibleSender returns (bool) {
+        require(expiryToSettlementPrice[expiry] != 0, "Settlement price not saved");
         ExpiryInfo memory info = expiryInfo[expiry];
-        if (info.count == 0) {
+        if (info.count == 0 || info.expired) {
             return false;
         }
         uint256 startId = info.startId;
@@ -521,6 +547,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                 expireSpreadOptionPosition(i);
             }
         }
+        expiryInfo[expiry].expired = true;
         emit KeeperExpireSpreads(expiry, msg.sender);
         return true;
     }
@@ -548,11 +575,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @notice External function to return the volatility
     /// @param strike Strike of option
     /// @param expiry Expiry of option
-    function getVolatilityWithExpiry(uint256 strike, uint256 expiry)
-        public
-        view
-        returns (uint256 volatility)
-    {
+    function getVolatilityWithExpiry(uint256 strike, uint256 expiry) public view returns (uint256 volatility) {
         volatility = uint256(volatilityOracle.getVolatility(oracleId, expiry, strike));
     }
 

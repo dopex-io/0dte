@@ -9,13 +9,13 @@ cast call $ZDTE \
   "getVolatility(uint)(uint)" \
   $TWO_K
 
-cast call $ZDTE \
-  --rpc-url $REAL_ARB_RPC_URL \
-  "getVolatility(uint)(uint)" \
-  $TWO_K_FIVE
+# cast call $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   "getVolatility(uint)(uint)" \
+#   $TWO_K_FIVE
 
-cast send $ZDTE \
-  --rpc-url $REAL_ARB_RPC_URL \
-  --private-key $REAL_ADMIN_PK \
-  "spreadOptionPosition(bool,uint256,uint256,uint256)" \
-  false $POINT_ONE_ETHER $TWO_K $TWO_K_FIVE
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "spreadOptionPosition(bool,uint256,uint256,uint256)" \
+#   false $POINT_ONE_ETHER $TWO_K $TWO_K_FIVE
