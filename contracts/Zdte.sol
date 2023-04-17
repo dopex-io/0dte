@@ -315,9 +315,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     // @param amount Amount of LP positions to withdraw
     function withdraw(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            quoteWithdrawal(amount);
+            require(quoteWithdrawal(amount), "Fail to withdraw");
         } else {
-            baseWithdrawal(amount);
+            require(baseWithdrawal(amount), "Fail to withdraw");
         }
         emit Withdraw(isQuote, amount, msg.sender);
     }
