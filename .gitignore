@@ -9,3 +9,8 @@ typechain-types
 cache
 artifacts
 
+.secrets
+.fake_secrets
+out/
+artifacts/
+broadcast/

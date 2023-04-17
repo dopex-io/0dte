@@ -1,0 +1,21 @@
+#!/bin/sh
+
+source .secrets
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   "quoteLp()(address)"
+
+# cast call $zdte \
+#   --rpc-url $ARB_GOERLI_RPC_URL \
+#   "baseLp()(address)"
+
+# 0x409fbAA5A4c2508149afc0d46160ca900CB38cb4
+cast call $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  "quoteLp()(address)"
+
+# 0xA34FD88dc0221702E5B47214ea8C813e50982c85
+cast call $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  "baseLp()(address)"

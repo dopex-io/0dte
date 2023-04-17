@@ -13,50 +13,50 @@ module.exports = {
   solidity: {
     compilers: [
       {
-        version: "0.8.9",
+        version: "0.8.19",
         settings: {
           optimizer: {
             enabled: true,
-            runs: 5000
-          }
-        }
+            runs: 5000,
+          },
+        },
       },
       {
         version: "0.6.12",
         settings: {
           optimizer: {
             enabled: true,
-            runs: 5000
-          }
-        }
-      }
-    ]
+            runs: 5000,
+          },
+        },
+      },
+    ],
   },
   namedAccounts: {
     deployer: 0,
-    user1: 1
+    user1: 1,
   },
   networks: {
     arbitrum: {
       chainId: 42161,
       url: "https://arb1.arbitrum.io/rpc",
-      accounts: [process.env.KEY]
+      accounts: [process.env.ALICE],
     },
     hardhat: {
       forking: {
-        url: process.env.ARBITRUM_NET_API_URL,
-        blockNumber: 44832616
+        url: process.env.ARBITRUM_RPC_URL,
+        blockNumber: 44832616,
       },
-      chainId: 42161
-    }
+      chainId: 42161,
+    },
   },
   etherscan: {
     apiKey: {
       mainnet: process.env.ETHERSCAN_API_KEY,
-      arbitrumOne: process.env.ARBISCAN_API_KEY
-    }
+      arbitrumOne: process.env.ARBISCAN_API_KEY,
+    },
   },
   mocha: {
-    timeout: 140000
-  }
+    timeout: 140000,
+  },
 };
