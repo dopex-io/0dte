@@ -92,14 +92,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @dev expiry to info
     mapping(uint256 => ExpiryInfo) public expiryInfo;
 
-    /// @dev expiry to settlement price
-    mapping(uint256 => uint256) public expiryToSettlementPrice;
-
     /// @dev User to base balance to timestamp
-    mapping(address => DepositInfo[]) userToBaseDepositInfo;
+    mapping(address => DepositInfo[]) public userToBaseDepositInfo;
 
     /// @dev User to quote balance to timestamp
-    mapping(address => DepositInfo[]) userToQuoteDepositInfo;
+    mapping(address => DepositInfo[]) public userToQuoteDepositInfo;
 
     struct ZdtePosition {
         // Is position open
@@ -136,6 +133,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 expiry;
         uint256 startId;
         uint256 count;
+        uint256 settlementPrice;
     }
 
     struct DepositInfo {
@@ -272,6 +270,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                     quoteLpTokenLiquidty -= withdrawalAmount;
                     quoteLp.redeem(withdrawalAmount, msg.sender, msg.sender);
                     userToQuoteDepositInfo[msg.sender][i].amount -= withdrawalAmount;
+                } else if (depositInfo.amount == 0) {
+                    continue;
                 } else {
                     withdrawalAmount -= depositInfo.amount;
                     quoteLpTokenLiquidty -= depositInfo.amount;
@@ -297,6 +297,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                     baseLpTokenLiquidty -= withdrawalAmount;
                     baseLp.redeem(withdrawalAmount, msg.sender, msg.sender);
                     userToBaseDepositInfo[msg.sender][i].amount -= withdrawalAmount;
+                } else if (depositInfo.amount == 0) {
+                    continue;
                 } else {
                     withdrawalAmount -= depositInfo.amount;
                     baseLpTokenLiquidty -= depositInfo.amount;
@@ -500,8 +502,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         returns (bool)
     {
         require(expiry < block.timestamp, "Expiry must be in the past");
-        require(expiryToSettlementPrice[expiry] == 0, "Settlement price saved");
-        expiryToSettlementPrice[expiry] = settlementPrice;
+        require(expiryInfo[expiry].settlementPrice == 0, "Settlement price saved");
+        expiryInfo[expiry].settlementPrice = settlementPrice;
         emit SettlementPriceSaved(expiry, settlementPrice);
         return true;
     }
@@ -516,7 +518,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @notice Helper function expire prev epoch
     /// @param expiry Expiry to expire
     function expireSpreads(uint256 expiry) public whenNotPaused onlyKeeperOrAdmin returns (bool) {
-        require(expiryToSettlementPrice[expiry] != 0, "Settlement price not saved");
+        require(expiryInfo[expiry].settlementPrice != 0, "Settlement price not saved");
         ExpiryInfo memory info = expiryInfo[expiry];
         if (info.count == 0 || info.expired) {
             return false;
@@ -672,8 +674,14 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     function _recordSpreadCount(uint256 positionId) internal {
         uint256 expiry = getCurrentExpiry();
         if (!expiryInfo[expiry].begin) {
-            expiryInfo[expiry] =
-                ExpiryInfo({expiry: expiry, begin: true, expired: false, startId: positionId, count: 1});
+            expiryInfo[expiry] = ExpiryInfo({
+                expiry: expiry,
+                begin: true,
+                expired: false,
+                startId: positionId,
+                count: 1,
+                settlementPrice: 0
+            });
         } else {
             expiryInfo[expiry].count++;
         }
