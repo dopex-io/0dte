@@ -420,19 +420,12 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         return true;
     }
 
-    /// @notice save settlement price and expire prev epochs
-    function keeperRun() external whenNotPaused onlyKeeperOrAdmin returns (bool) {
-        require(keeperSaveSettlementPrice(), "Failed to save settlement price");
-        require(keeperExpirePrevEpochSpreads(), "Fail to expire prev epochs");
-        emit KeeperRan(block.timestamp);
-        return true;
-    }
-
     /// @notice Helper function for keeper to save settlement price
     function keeperSaveSettlementPrice() public whenNotPaused onlyKeeperOrAdmin returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         require(block.timestamp < prevExpiry + EXPIRY_DELAY_TOLERANCE, "Expiry is past tolerance");
-        return saveSettlementPrice(prevExpiry, getMarkPrice());
+        require(saveSettlementPrice(prevExpiry, getMarkPrice()), "Failed to save settlement price");
+        return true;
     }
 
     /// @notice Helper function set settlement price at expiry
