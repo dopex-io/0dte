@@ -9,6 +9,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {ZdtePositionMinter} from "./positions/ZdtePositionMinter.sol";
 
@@ -64,6 +65,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     uint256 public MAX_LONG_STRIKE_VOL_ADJUST = 30; // 30%
 
     uint256 internal LP_TIMELOCK = 1 days;
+
+    uint256 internal MAX_EXPIRE_BATCH = 30;
 
     /// @dev Expire delay tolerance
     uint256 public EXPIRY_DELAY_TOLERANCE = 5 minutes;
@@ -129,11 +132,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     struct ExpiryInfo {
         bool begin;
-        bool expired;
         uint256 expiry;
         uint256 startId;
         uint256 count;
         uint256 settlementPrice;
+        uint256 lastProccessedId;
     }
 
     struct DepositInfo {
@@ -156,7 +159,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     event SpreadOptionPositionExpired(uint256 id, uint256 pnl, address indexed user);
 
     // Keeper expire long option position event
-    event KeeperExpireSpreads(uint256 expiry, address indexed user);
+    event KeeperExpireSpreads(uint256 expiry, uint256 lastId, address indexed user);
 
     // Set settlement price event
     event SettlementPriceSaved(uint256 expiry, uint256 settlementPrice);
@@ -511,27 +514,31 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @notice Helper function expire prev epoch
     function keeperExpirePrevEpochSpreads() public whenNotPaused onlyKeeperOrAdmin returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
-        require(expireSpreads(prevExpiry), "keeper failed to expire spreads");
+        ExpiryInfo memory ei = expiryInfo[prevExpiry];
+        uint256 startId = ei.lastProccessedId == 0 ? ei.startId : ei.lastProccessedId; 
+        require(expireSpreads(prevExpiry, startId), "keeper failed to expire spreads");
         return true;
     }
 
     /// @notice Helper function expire prev epoch
     /// @param expiry Expiry to expire
-    function expireSpreads(uint256 expiry) public whenNotPaused onlyKeeperOrAdmin returns (bool) {
+    function expireSpreads(uint256 expiry, uint256 startId) public whenNotPaused onlyKeeperOrAdmin returns (bool) {
         require(expiryInfo[expiry].settlementPrice != 0, "Settlement price not saved");
         ExpiryInfo memory info = expiryInfo[expiry];
-        if (info.count == 0 || info.expired) {
+        if (info.count == 0) {
             return false;
         }
-        uint256 startId = info.startId;
-        uint256 endId = info.startId + info.count;
-        for (uint256 i = startId; i < endId; i++) {
-            if (zdtePositions[i].isOpen && zdtePositions[i].isSpread) {
-                expireSpreadOptionPosition(i);
+        uint256 numToProcess = Math.min(info.count, MAX_EXPIRE_BATCH);
+        uint256 endIdx = startId + numToProcess;
+        while (startId < endIdx) {
+            if (zdtePositions[startId].isOpen && zdtePositions[startId].isSpread) {
+                expireSpreadOptionPosition(startId);
             }
+            startId++;
         }
-        expiryInfo[expiry].expired = true;
-        emit KeeperExpireSpreads(expiry, msg.sender);
+        expiryInfo[expiry].count -= numToProcess;
+        expiryInfo[expiry].lastProccessedId = startId;
+        emit KeeperExpireSpreads(expiry, startId, msg.sender);
         return true;
     }
 
@@ -642,7 +649,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @param id ID of position
     /// @return pnl PNL in quote asset i.e USD (1e6)
     function calcPnl(uint256 id) public view returns (uint256 pnl) {
-        uint256 markPrice = getMarkPrice();
+        ZdtePosition memory zp = zdtePositions[id];
+        uint256 markPrice = zp.expiry < block.timestamp ? expiryInfo[zp.expiry].settlementPrice : getMarkPrice();
         uint256 longStrike = zdtePositions[id].longStrike;
         uint256 shortStrike = zdtePositions[id].shortStrike;
         if (zdtePositions[id].isSpread) {
@@ -677,7 +685,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             expiryInfo[expiry] = ExpiryInfo({
                 expiry: expiry,
                 begin: true,
-                expired: false,
+                lastProccessedId: 0,
                 startId: positionId,
                 count: 1,
                 settlementPrice: 0
@@ -709,6 +717,16 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         } else {
             expiry = getCurrentExpiry() - 1 days;
         }
+    }
+
+    /// @notice Public function to return base deposit info
+    function getUserToBaseDepositInfo(address user) public view returns (DepositInfo[] memory) {
+        return userToBaseDepositInfo[user];
+    }
+
+    /// @notice Public function to return quote deposit info
+    function getUserToQuoteDepositInfo(address user) public view returns (DepositInfo[] memory) {
+        return userToQuoteDepositInfo[user];
     }
 
     /// @notice update margin of safety
