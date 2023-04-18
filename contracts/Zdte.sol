@@ -64,8 +64,6 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     uint256 public MAX_LONG_STRIKE_VOL_ADJUST = 30; // 30%
 
-    uint256 internal LP_TIMELOCK = 1 days;
-
     uint256 internal MAX_EXPIRE_BATCH = 30;
 
     /// @dev Expire delay tolerance
@@ -94,12 +92,6 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @dev expiry to info
     mapping(uint256 => ExpiryInfo) public expiryInfo;
-
-    /// @dev User to base balance to timestamp
-    mapping(address => DepositInfo[]) public userToBaseDepositInfo;
-
-    /// @dev User to quote balance to timestamp
-    mapping(address => DepositInfo[]) public userToQuoteDepositInfo;
 
     struct ZdtePosition {
         // Is position open
@@ -137,11 +129,6 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 count;
         uint256 settlementPrice;
         uint256 lastProccessedId;
-    }
-
-    struct DepositInfo {
-        uint256 amount;
-        uint256 expiry;
     }
 
     // Deposit event
@@ -241,97 +228,41 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         );
     }
 
-    // @notice Deposit assets
-    // @param isQuote If true user deposits quote token (else base)
-    // @param amount Amount of quote asset to deposit to LP
+    /// @notice Deposit assets
+    /// @param isQuote If true user deposits quote token (else base)
+    /// @param amount Amount of quote asset to deposit to LP
     function deposit(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
             quoteLpTokenLiquidty += amount;
-            userToQuoteDepositInfo[msg.sender].push(
-                DepositInfo({amount: amount, expiry: block.timestamp + LP_TIMELOCK})
-            );
             quote.transferFrom(msg.sender, address(this), amount);
             quoteLp.deposit(amount, msg.sender);
         } else {
             baseLpTokenLiquidty += amount;
-            userToBaseDepositInfo[msg.sender].push(DepositInfo({amount: amount, expiry: block.timestamp + LP_TIMELOCK}));
             base.transferFrom(msg.sender, address(this), amount);
             baseLp.deposit(amount, msg.sender);
         }
         emit Deposit(isQuote, amount, msg.sender);
     }
 
-    // @notice withdraw assets
-    // @param amount Amount of assets to withdraw
-    function quoteWithdrawal(uint256 withdrawalAmount) internal returns (bool) {
-        require(withdrawalAmount > 0, "Invalid withdrawal amount");
-        uint256 quoteDepositLength = userToQuoteDepositInfo[msg.sender].length;
-        for (uint256 i = 0; i < quoteDepositLength; i++) {
-            DepositInfo memory depositInfo = userToQuoteDepositInfo[msg.sender][i];
-            if (depositInfo.expiry <= block.timestamp) {
-                if (depositInfo.amount > withdrawalAmount) {
-                    quoteLpTokenLiquidty -= withdrawalAmount;
-                    quoteLp.redeem(withdrawalAmount, msg.sender, msg.sender);
-                    userToQuoteDepositInfo[msg.sender][i].amount -= withdrawalAmount;
-                } else if (depositInfo.amount == 0) {
-                    continue;
-                } else {
-                    withdrawalAmount -= depositInfo.amount;
-                    quoteLpTokenLiquidty -= depositInfo.amount;
-                    quoteLp.redeem(depositInfo.amount, msg.sender, msg.sender);
-                    userToQuoteDepositInfo[msg.sender][i].amount = 0;
-                }
-            } else {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // @notice withdraw assets
-    // @param amount Amount of assets to withdraw
-    function baseWithdrawal(uint256 withdrawalAmount) internal returns (bool) {
-        require(withdrawalAmount > 0, "Invalid withdrawal amount");
-        uint256 baseDepositLength = userToBaseDepositInfo[msg.sender].length;
-        for (uint256 i = 0; i < baseDepositLength; i++) {
-            DepositInfo memory depositInfo = userToBaseDepositInfo[msg.sender][i];
-            if (depositInfo.expiry <= block.timestamp) {
-                if (depositInfo.amount > withdrawalAmount) {
-                    baseLpTokenLiquidty -= withdrawalAmount;
-                    baseLp.redeem(withdrawalAmount, msg.sender, msg.sender);
-                    userToBaseDepositInfo[msg.sender][i].amount -= withdrawalAmount;
-                } else if (depositInfo.amount == 0) {
-                    continue;
-                } else {
-                    withdrawalAmount -= depositInfo.amount;
-                    baseLpTokenLiquidty -= depositInfo.amount;
-                    baseLp.redeem(depositInfo.amount, msg.sender, msg.sender);
-                    userToBaseDepositInfo[msg.sender][i].amount = 0;
-                }
-            } else {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // Withdraw
-    // @param isQuote If true user withdraws quote token (else base)
-    // @param amount Amount of LP positions to withdraw
+    /// @notice Withdraw
+    /// @param isQuote If true user withdraws quote token (else base)
+    /// @param amount Amount of LP positions to withdraw
     function withdraw(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            require(quoteWithdrawal(amount), "Fail to withdraw");
+            quoteLpTokenLiquidty -= amount;
+            quoteLp.redeem(amount, msg.sender, msg.sender);
         } else {
-            require(baseWithdrawal(amount), "Fail to withdraw");
+            baseLpTokenLiquidty -= amount;
+            baseLp.redeem(amount, msg.sender, msg.sender);
         }
         emit Withdraw(isQuote, amount, msg.sender);
     }
 
     /// @notice Sets up a zdte spread option position
-    // @param isPut is put spread
-    // @param amount Amount of options to long // 1e18
-    // @param longStrike Long Strike price // 1e8
-    // @param shortStrike Short Strike price // 1e8
+    /// @param isPut is put spread
+    /// @param amount Amount of options to long // 1e18
+    /// @param longStrike Long Strike price // 1e8
+    /// @param shortStrike Short Strike price // 1e8
     function spreadOptionPosition(bool isPut, uint256 amount, uint256 longStrike, uint256 shortStrike)
         external
         whenNotPaused
@@ -583,7 +514,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         return isPut ? quoteLp.totalAvailableAssets() >= margin : baseLp.totalAvailableAssets() >= margin;
     }
 
-    /// @notice Internal function to calculate premium in quote
+    /// @notice Public function to calculate premium in quote
     /// @param isPut if calc premium for put
     /// @param strike Strike of option
     /// @param amount Amount of option
@@ -600,6 +531,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         premium = premium / AMOUNT_PRICE_TO_USDC_DECIMALS;
     }
 
+    /// @notice Public function to calculate premium in quote
+    /// @param isPut if calc premium for put
+    /// @param strike Strike of option
+    /// @param volatility Vol
+    /// @param amount Amount of option
     function calcPremiumWithVol(
         bool isPut,
         uint256 markPrice,
@@ -717,16 +653,6 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         } else {
             expiry = getCurrentExpiry() - 1 days;
         }
-    }
-
-    /// @notice Public function to return base deposit info
-    function getUserToBaseDepositInfo(address user) public view returns (DepositInfo[] memory) {
-        return userToBaseDepositInfo[user];
-    }
-
-    /// @notice Public function to return quote deposit info
-    function getUserToQuoteDepositInfo(address user) public view returns (DepositInfo[] memory) {
-        return userToQuoteDepositInfo[user];
     }
 
     /// @notice update margin of safety
