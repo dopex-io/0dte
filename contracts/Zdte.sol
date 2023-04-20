@@ -84,6 +84,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @dev quote token liquidity
     uint256 public quoteLpTokenLiquidty;
 
+    /// @dev open interest amount
+    uint256 public openInterestAmount;
+
     /// @dev oracle ID
     bytes32 public oracleId = keccak256("ETH-USD-ZDTE");
 
@@ -120,6 +123,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 expiry;
         // Margin
         uint256 margin;
+        // Mark price at purchase
+        uint256 markPrice;
     }
 
     struct ExpiryInfo {
@@ -364,9 +369,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             pnl: 0,
             openedAt: block.timestamp,
             expiry: getCurrentExpiry(),
-            margin: margin
+            margin: margin,
+            markPrice: markPrice
         });
 
+        openInterestAmount += amount;
         _recordSpreadCount(id);
 
         emit SpreadOptionPosition(id, amount, longStrike, shortStrike, msg.sender);
@@ -408,6 +415,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             baseLp.unlockLiquidity(margin);
         }
 
+        openInterestAmount -= zdtePositions[id].positions;
         zdtePositions[id].isOpen = false;
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }

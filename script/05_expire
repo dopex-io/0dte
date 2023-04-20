@@ -10,11 +10,11 @@ prev_expire=$(cast call $ZDTE \
 
 echo $prev_expire
 
-# cast send $ZDTE \
-#   --rpc-url $REAL_ARB_RPC_URL \
-#   --private-key $REAL_ADMIN_PK \
-#   "saveSettlementPrice(uint,uint)(bool)" \
-#   $prev_expire $TWO_K_ONE
+cast send $ZDTE \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "saveSettlementPrice(uint,uint)(bool)" \
+  $prev_expire $TWO_K_ONE
 
 cast send $ZDTE \
   --rpc-url $REAL_ARB_RPC_URL \

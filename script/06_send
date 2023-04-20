@@ -1,0 +1,19 @@
+#!/bin/sh
+
+set -e
+
+source .secrets
+
+dst=
+
+cast send $ETH \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "transfer(address,uint)" \
+  $dst $ETHER 
+
+cast send $USDC \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "transfer(address,uint)" \
+  $dst $HUNDRED_USD
