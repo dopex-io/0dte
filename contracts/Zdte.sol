@@ -79,10 +79,10 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     uint256 public genesisExpiry;
 
     /// @dev base token liquidity
-    uint256 public baseLpTokenLiquidty;
+    uint256 public baseLpTokenLiquidity;
 
     /// @dev quote token liquidity
-    uint256 public quoteLpTokenLiquidty;
+    uint256 public quoteLpTokenLiquidity;
 
     /// @dev open interest amount
     uint256 public openInterestAmount;
@@ -238,11 +238,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @param amount Amount of quote asset to deposit to LP
     function deposit(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            quoteLpTokenLiquidty += amount;
+            quoteLpTokenLiquidity += amount;
             quote.transferFrom(msg.sender, address(this), amount);
             quoteLp.deposit(amount, msg.sender);
         } else {
-            baseLpTokenLiquidty += amount;
+            baseLpTokenLiquidity += amount;
             base.transferFrom(msg.sender, address(this), amount);
             baseLp.deposit(amount, msg.sender);
         }
@@ -254,10 +254,10 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @param amount Amount of LP positions to withdraw
     function withdraw(bool isQuote, uint256 amount) external whenNotPaused nonReentrant isEligibleSender {
         if (isQuote) {
-            quoteLpTokenLiquidty -= amount;
+            quoteLpTokenLiquidity -= amount;
             quoteLp.redeem(amount, msg.sender, msg.sender);
         } else {
-            baseLpTokenLiquidty -= amount;
+            baseLpTokenLiquidity -= amount;
             baseLp.redeem(amount, msg.sender, msg.sender);
         }
         emit Withdraw(isQuote, amount, msg.sender);
@@ -429,7 +429,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     }
 
     /// @notice Helper function for keeper to save settlement price
-    function keeperSaveSettlementPrice() public whenNotPaused onlyKeeperOrAdmin returns (bool) {
+    function keeperSaveSettlementPrice() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         require(block.timestamp < prevExpiry + EXPIRY_DELAY_TOLERANCE, "Expiry is past tolerance");
         require(saveSettlementPrice(prevExpiry, getMarkPrice()), "Failed to save settlement price");
@@ -442,7 +442,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     function saveSettlementPrice(uint256 expiry, uint256 settlementPrice)
         public
         whenNotPaused
-        onlyKeeperOrAdmin
+        onlyOwner
         returns (bool)
     {
         require(expiry < block.timestamp, "Expiry must be in the past");
@@ -453,7 +453,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     }
 
     /// @notice Helper function expire prev epoch
-    function keeperExpirePrevEpochSpreads() public whenNotPaused onlyKeeperOrAdmin returns (bool) {
+    function keeperExpirePrevEpochSpreads() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         ExpiryInfo memory ei = expiryInfo[prevExpiry];
         uint256 startId = ei.lastProccessedId == 0 ? ei.startId : ei.lastProccessedId;
@@ -463,7 +463,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @notice Helper function expire prev epoch
     /// @param expiry Expiry to expire
-    function expireSpreads(uint256 expiry, uint256 startId) public whenNotPaused onlyKeeperOrAdmin returns (bool) {
+    function expireSpreads(uint256 expiry, uint256 startId) public whenNotPaused returns (bool) {
         require(expiryInfo[expiry].settlementPrice != 0, "Settlement price not saved");
         ExpiryInfo memory info = expiryInfo[expiry];
         if (info.count == 0) {
@@ -557,6 +557,32 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
             uint256(optionPricing.getOptionPrice(isPut, getCurrentExpiry(), strike, markPrice, volatility)) * amount; // ATM options: does not matter if call or put
         // Convert to 6 decimal places (quote asset)
         premium = premium / AMOUNT_PRICE_TO_USDC_DECIMALS;
+    }
+
+
+    /// @notice Public function to calculate premium in quote
+    /// @param isPut if calc premium for put
+    /// @param strike Strike of option
+    /// @param amount Amount of option
+    function calcPremiumCustom(
+        bool isPut,
+        uint256 strike, // 1e8
+        uint256 amount
+    ) public view returns (uint256 premium) {
+        // Calculate premium for long option in quote (1e6)
+        uint256 vol = getVolatility(strike);
+
+        uint256 utilisation = 0;
+        if (isPut) {
+            utilisation = ((quoteLp.totalAssets() - quoteLp.totalAvailableAssets()) * 10000) / quoteLp.totalAssets();
+        } else {
+            utilisation = ((baseLp.totalAssets() - baseLp.totalAvailableAssets()) * 10000) / baseLp.totalAssets();
+        }
+
+        // Adjust longStrikeVol in function of utilisation
+        vol = vol + (vol * MIN_LONG_STRIKE_VOL_ADJUST) / 100
+            + (vol * utilisation * (MAX_LONG_STRIKE_VOL_ADJUST - MIN_LONG_STRIKE_VOL_ADJUST)) / (100 * 10000);
+        premium = calcPremiumWithVol(isPut, getMarkPrice(), strike, vol, amount);
     }
 
     /// @notice Internal function to calculate premium in quote
@@ -725,10 +751,5 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
                 ++i;
             }
         }
-    }
-
-    modifier onlyKeeperOrAdmin() {
-        require(msg.sender == keeper || msg.sender == owner(), "Sender must be the keeper or admin");
-        _;
     }
 }
