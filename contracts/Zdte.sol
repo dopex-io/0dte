@@ -573,9 +573,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         uint256 vol = getVolatility(strike);
 
         uint256 utilisation = 0;
-        if (isPut) {
+        if (isPut && quoteLp.totalAssets() > 0) {
             utilisation = ((quoteLp.totalAssets() - quoteLp.totalAvailableAssets()) * 10000) / quoteLp.totalAssets();
-        } else {
+        } else if (!isPut && baseLp.totalAssets() > 0) {
             utilisation = ((baseLp.totalAssets() - baseLp.totalAvailableAssets()) * 10000) / baseLp.totalAssets();
         }
 
