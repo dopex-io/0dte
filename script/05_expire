@@ -16,7 +16,7 @@ cast send $ZDTE \
   "saveSettlementPrice(uint,uint)(bool)" \
   $prev_expire $TWO_K_ONE
 
-cast send $ZDTE \
-  --rpc-url $REAL_ARB_RPC_URL \
-  --private-key $REAL_ADMIN_PK \
-  "keeperExpirePrevEpochSpreads()(bool)"
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "keeperExpirePrevEpochSpreads()(bool)"
