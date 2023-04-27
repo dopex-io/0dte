@@ -20,8 +20,6 @@ import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
 import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 
-import "hardhat/console.sol";
-
 contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     using SafeERC20 for IERC20Metadata;
 
