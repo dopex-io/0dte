@@ -60,9 +60,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     uint256 public spreadMarginSafety = 300; // 300%
 
-    uint256 public MIN_LONG_STRIKE_VOL_ADJUST = 5; // 5%
+    uint256 public minLongStrikeVolAdjust = 5; // 5%
 
-    uint256 public MAX_LONG_STRIKE_VOL_ADJUST = 30; // 30%
+    uint256 public maxLongStrikeVolAdjust = 30; // 30%
 
     uint256 internal MAX_EXPIRE_BATCH = 30;
 
@@ -324,8 +324,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         // Calculate premium for long option in quote (1e6)
         uint256 vol = getVolatility(longStrike);
         // Adjust longStrikeVol in function of utilisation
-        vol = vol + (vol * MIN_LONG_STRIKE_VOL_ADJUST) / 100
-            + (vol * utilisation * (MAX_LONG_STRIKE_VOL_ADJUST - MIN_LONG_STRIKE_VOL_ADJUST)) / (100 * 10000);
+        vol = vol + (vol * minLongStrikeVolAdjust) / 100
+            + (vol * utilisation * (maxLongStrikeVolAdjust - minLongStrikeVolAdjust)) / (100 * 10000);
         uint256 longPremium = calcPremiumWithVol(isPut, markPrice, longStrike, vol, amount);
 
         // Calculate premium for short option in quote (1e6)
@@ -580,8 +580,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         }
 
         // Adjust longStrikeVol in function of utilisation
-        vol = vol + (vol * MIN_LONG_STRIKE_VOL_ADJUST) / 100
-            + (vol * utilisation * (MAX_LONG_STRIKE_VOL_ADJUST - MIN_LONG_STRIKE_VOL_ADJUST)) / (100 * 10000);
+        vol = vol + (vol * minLongStrikeVolAdjust) / 100
+            + (vol * utilisation * (maxLongStrikeVolAdjust - minLongStrikeVolAdjust)) / (100 * 10000);
         premium = calcPremiumWithVol(isPut, getMarkPrice(), strike, vol, amount);
     }
 
@@ -694,6 +694,24 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         } else {
             expiry = getCurrentExpiry() - 1 days;
         }
+    }
+
+    /// @notice update max otm percentage
+    /// @param _maxOtmPercentage New margin of safety
+    function updateMaxOtmPercentage(uint256 _maxOtmPercentage) external onlyOwner {
+        maxOtmPercentage = _maxOtmPercentage;
+    }
+
+    /// @notice update min long vol adjust
+    /// @param _minLongStrikeVolAdjust New margin of safety
+    function updateMinLongStrikeVolAdjust(uint256 _minLongStrikeVolAdjust) external onlyOwner {
+        minLongStrikeVolAdjust = _minLongStrikeVolAdjust;
+    }
+
+    /// @notice update max long vol adjust
+    /// @param _maxLongStrikeVolAdjust New margin of safety
+    function updateMaxLongStrikeVolAdjust(uint256 _maxLongStrikeVolAdjust) external onlyOwner {
+        maxLongStrikeVolAdjust = _maxLongStrikeVolAdjust;
     }
 
     /// @notice update margin of safety
