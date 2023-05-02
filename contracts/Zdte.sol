@@ -434,13 +434,18 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         return true;
     }
 
+    /// @notice Helper function for admin to save settlement price
+    function adminSaveSettlementPrice(uint256 expiry, uint256 settlementPrice) external onlyOwner whenNotPaused returns (bool) {
+        require(saveSettlementPrice(expiry, settlementPrice), "Failed to save settlement price");
+        return true;
+    }
+
     /// @notice Helper function set settlement price at expiry
     /// @param expiry Expiry to set settlement price
     /// @param settlementPrice Settlement price
     function saveSettlementPrice(uint256 expiry, uint256 settlementPrice)
-        public
+        internal
         whenNotPaused
-        onlyOwner
         returns (bool)
     {
         require(expiry < block.timestamp, "Expiry must be in the past");
