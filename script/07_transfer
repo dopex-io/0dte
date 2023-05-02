@@ -4,17 +4,14 @@ set -e
 
 source .secrets
 
-master=0xDe485812E28824e542B9c2270B6b8eD9232B7D0b
-keeper=0x200cbD2e964519375656dB0248a06064336044d9
-
-# cast send $ETH \
-#   --rpc-url $REAL_ARB_RPC_URL \
-#   --private-key $REAL_ADMIN_PK \
-#   "transferOwnership(address)" \
-#   $master  
-
-cast send $ETH \
+cast send $ZDTE \
   --rpc-url $REAL_ARB_RPC_URL \
   --private-key $REAL_ADMIN_PK \
-  "assignKeeperRole(address)" \
-  $keeper  
+  "transferOwnership(address)" \
+  $MASTER
+
+# cast send $ZDTE \
+#   --rpc-url $REAL_ARB_RPC_URL \
+#   --private-key $REAL_ADMIN_PK \
+#   "assignKeeperRole(address)" \
+#   $keeper  
