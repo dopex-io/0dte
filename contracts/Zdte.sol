@@ -8,7 +8,7 @@ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {ZdtePositionMinter} from "./positions/ZdtePositionMinter.sol";
@@ -20,7 +20,7 @@ import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
 import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 
-contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
+contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     using SafeERC20 for IERC20Metadata;
 
     // Base token
@@ -213,6 +213,8 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
         quote.approve(address(quoteLp), type(uint256).max);
         base.approve(address(baseLp), type(uint256).max);
+
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     /// @notice Internal function to handle swaps using Uniswap V3 exactIn
@@ -423,7 +425,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @notice assign keeper
     /// @param _keeper address of keeper
-    function assignKeeperRole(address _keeper) external onlyOwner returns (bool) {
+    function assignKeeperRole(address _keeper) external onlyRole(DEFAULT_ADMIN_ROLE) returns (bool) {
         keeper = _keeper;
         emit KeeperAssigned(_keeper);
         return true;
@@ -440,7 +442,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @notice Helper function for admin to save settlement price
     function adminSaveSettlementPrice(uint256 expiry, uint256 settlementPrice)
         external
-        onlyOwner
+        onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
         returns (bool)
     {
@@ -704,64 +706,64 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     /// @notice Updates the delay tolerance for the expiry epoch function
     /// @dev Can only be called by the owner
-    function updateExpireDelayTolerance(uint256 _expireDelayTolerance) external onlyOwner {
+    function updateExpireDelayTolerance(uint256 _expireDelayTolerance) external onlyRole(DEFAULT_ADMIN_ROLE) {
         expireDelayTolerance = _expireDelayTolerance;
         emit ExpireDelayToleranceUpdate(_expireDelayTolerance);
     }
 
     /// @notice update max otm percentage
     /// @param _maxOtmPercentage New margin of safety
-    function updateMaxOtmPercentage(uint256 _maxOtmPercentage) external onlyOwner {
+    function updateMaxOtmPercentage(uint256 _maxOtmPercentage) external onlyRole(DEFAULT_ADMIN_ROLE) {
         maxOtmPercentage = _maxOtmPercentage;
     }
 
     /// @notice update min long vol adjust
     /// @param _minLongStrikeVolAdjust New margin of safety
-    function updateMinLongStrikeVolAdjust(uint256 _minLongStrikeVolAdjust) external onlyOwner {
+    function updateMinLongStrikeVolAdjust(uint256 _minLongStrikeVolAdjust) external onlyRole(DEFAULT_ADMIN_ROLE) {
         minLongStrikeVolAdjust = _minLongStrikeVolAdjust;
     }
 
     /// @notice update max long vol adjust
     /// @param _maxLongStrikeVolAdjust New margin of safety
-    function updateMaxLongStrikeVolAdjust(uint256 _maxLongStrikeVolAdjust) external onlyOwner {
+    function updateMaxLongStrikeVolAdjust(uint256 _maxLongStrikeVolAdjust) external onlyRole(DEFAULT_ADMIN_ROLE) {
         maxLongStrikeVolAdjust = _maxLongStrikeVolAdjust;
     }
 
     /// @notice update margin of safety
     /// @param _spreadMarginSafety New margin of safety
-    function updateMarginOfSafety(uint256 _spreadMarginSafety) external onlyOwner {
+    function updateMarginOfSafety(uint256 _spreadMarginSafety) external onlyRole(DEFAULT_ADMIN_ROLE) {
         spreadMarginSafety = _spreadMarginSafety;
     }
 
     /// @notice update oracleId
     /// @param _oracleId Oracle Id
-    function updateOracleId(bytes32 _oracleId) external onlyOwner {
+    function updateOracleId(bytes32 _oracleId) external onlyRole(DEFAULT_ADMIN_ROLE) {
         oracleId = _oracleId;
     }
 
     /// @notice Pauses the vault for emergency cases
     /// @dev Can only be called by admin
-    function pause() external onlyOwner {
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
     /// @notice Unpauses the vault
     /// @dev Can only be called by admin
-    function unpause() external onlyOwner {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
     /// @notice Add a contract to the whitelist
     /// @dev Can only be called by the owner
     /// @param _contract Address of the contract that needs to be added to the whitelist
-    function addToContractWhitelist(address _contract) external onlyOwner {
+    function addToContractWhitelist(address _contract) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _addToContractWhitelist(_contract);
     }
 
     /// @notice Remove a contract to the whitelist
     /// @dev Can only be called by the owner
     /// @param _contract Address of the contract that needs to be removed from the whitelist
-    function removeFromContractWhitelist(address _contract) external onlyOwner {
+    function removeFromContractWhitelist(address _contract) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _removeFromContractWhitelist(_contract);
     }
 
@@ -769,7 +771,11 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @dev Can only be called by admin
     /// @param tokens The list of erc20 tokens to withdraw
     /// @param transferNative Whether should transfer the native currency
-    function emergencyWithdraw(address[] calldata tokens, bool transferNative) external onlyOwner whenPaused {
+    function emergencyWithdraw(address[] calldata tokens, bool transferNative)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        whenPaused
+    {
         if (transferNative) {
             payable(msg.sender).transfer(address(this).balance);
         }
