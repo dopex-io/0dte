@@ -65,7 +65,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     uint256 internal MAX_EXPIRE_BATCH = 30;
 
     /// @dev Expire delay tolerance
-    uint256 public EXPIRY_DELAY_TOLERANCE = 5 minutes;
+    uint256 public expireDelayTolerance = 5 minutes;
 
     /// @dev Strike increments
     uint256 public strikeIncrement;
@@ -159,6 +159,9 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
 
     // Keeper assigned to
     event KeeperAssigned(address keeper);
+
+    // Set delay tolerance
+    event ExpireDelayToleranceUpdate(uint256 delay);
 
     constructor(
         address _base,
@@ -429,13 +432,18 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @notice Helper function for keeper to save settlement price
     function keeperSaveSettlementPrice() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
-        require(block.timestamp < prevExpiry + EXPIRY_DELAY_TOLERANCE, "Expiry is past tolerance");
+        require(block.timestamp < prevExpiry + expireDelayTolerance, "Expiry is past tolerance");
         require(saveSettlementPrice(prevExpiry, getMarkPrice()), "Failed to save settlement price");
         return true;
     }
 
     /// @notice Helper function for admin to save settlement price
-    function adminSaveSettlementPrice(uint256 expiry, uint256 settlementPrice) external onlyOwner whenNotPaused returns (bool) {
+    function adminSaveSettlementPrice(uint256 expiry, uint256 settlementPrice)
+        external
+        onlyOwner
+        whenNotPaused
+        returns (bool)
+    {
         require(saveSettlementPrice(expiry, settlementPrice), "Failed to save settlement price");
         return true;
     }
@@ -443,11 +451,7 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
     /// @notice Helper function set settlement price at expiry
     /// @param expiry Expiry to set settlement price
     /// @param settlementPrice Settlement price
-    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice)
-        internal
-        whenNotPaused
-        returns (bool)
-    {
+    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice) internal whenNotPaused returns (bool) {
         require(expiry < block.timestamp, "Expiry must be in the past");
         require(expiryInfo[expiry].settlementPrice == 0, "Settlement price saved");
         expiryInfo[expiry].settlementPrice = settlementPrice;
@@ -561,7 +565,6 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         // Convert to 6 decimal places (quote asset)
         premium = premium / AMOUNT_PRICE_TO_USDC_DECIMALS;
     }
-
 
     /// @notice Public function to calculate premium in quote
     /// @param isPut if calc premium for put
@@ -697,6 +700,13 @@ contract Zdte is ReentrancyGuard, Ownable, Pausable, ContractWhitelist {
         } else {
             expiry = getCurrentExpiry() - 1 days;
         }
+    }
+
+    /// @notice Updates the delay tolerance for the expiry epoch function
+    /// @dev Can only be called by the owner
+    function updateExpireDelayTolerance(uint256 _expireDelayTolerance) external onlyOwner {
+        expireDelayTolerance = _expireDelayTolerance;
+        emit ExpireDelayToleranceUpdate(_expireDelayTolerance);
     }
 
     /// @notice update max otm percentage
