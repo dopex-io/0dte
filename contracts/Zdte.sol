@@ -31,7 +31,6 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     ZdteLP public baseLp;
     // zdte Quotee LP token
     ZdteLP public quoteLp;
-
     // Option pricing
     IOptionPricing public optionPricing;
     // Volatility oracle
@@ -44,8 +43,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     IUniswapV3Router public uniswapV3Router;
     // Fee distributor
     address public feeDistributor;
-    // Keeper address
-    address public keeper;
+ 
 
     // Fees for opening position
     uint256 public feeOpenPosition = 5000000; // 0.05%
@@ -148,17 +146,11 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     // Expire spread position event
     event SpreadOptionPositionExpired(uint256 id, uint256 pnl, address indexed user);
 
-    // Keeper expire long option position event
-    event KeeperExpireSpreads(uint256 expiry, uint256 lastId, address indexed user);
+    // Expire long option position event
+    event ExpireSpreads(uint256 expiry, uint256 lastId, address indexed user);
 
     // Set settlement price event
     event SettlementPriceSaved(uint256 expiry, uint256 settlementPrice);
-
-    // Get logs on when keeper ran
-    event KeeperRan(uint256 jobDoneTime);
-
-    // Keeper assigned to
-    event KeeperAssigned(address keeper);
 
     // Set delay tolerance
     event ExpireDelayToleranceUpdate(uint256 delay);
@@ -171,7 +163,6 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         address _priceOracle,
         address _uniswapV3Router,
         address _feeDistributor,
-        address _keeper,
         uint256 _strikeIncrement,
         uint256 _maxOtmPercentage,
         uint256 _genesisExpiry
@@ -183,7 +174,6 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         require(_priceOracle != address(0), "Invalid price oracle");
         require(_uniswapV3Router != address(0), "Invalid router");
         require(_feeDistributor != address(0), "Invalid fee distributor");
-        require(_keeper != address(0), "Invalid keeper");
 
         require(_strikeIncrement > 0, "Invalid strike increment");
         require(_maxOtmPercentage > 0, "Invalid max OTM %");
@@ -197,8 +187,6 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         uniswapV3Router = IUniswapV3Router(_uniswapV3Router);
 
         feeDistributor = _feeDistributor;
-        keeper = _keeper;
-
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
         genesisExpiry = _genesisExpiry;
@@ -423,37 +411,31 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }
 
-    /// @notice assign keeper
-    /// @param _keeper address of keeper
-    function assignKeeperRole(address _keeper) external onlyRole(DEFAULT_ADMIN_ROLE) returns (bool) {
-        keeper = _keeper;
-        emit KeeperAssigned(_keeper);
-        return true;
-    }
+
 
     /// @notice Helper function for keeper to save settlement price
-    function keeperSaveSettlementPrice() public whenNotPaused returns (bool) {
+    function saveSettlementPrice() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         require(block.timestamp < prevExpiry + expireDelayTolerance, "Expiry is past tolerance");
-        require(saveSettlementPrice(prevExpiry, getMarkPrice()), "Failed to save settlement price");
+        require(_saveSettlementPrice(prevExpiry, getMarkPrice()), "Failed to save settlement price");
         return true;
     }
 
     /// @notice Helper function for admin to save settlement price
-    function adminSaveSettlementPrice(uint256 expiry, uint256 settlementPrice)
+    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
         returns (bool)
     {
-        require(saveSettlementPrice(expiry, settlementPrice), "Failed to save settlement price");
+        require(_saveSettlementPrice(expiry, settlementPrice), "Failed to save settlement price");
         return true;
     }
 
     /// @notice Helper function set settlement price at expiry
     /// @param expiry Expiry to set settlement price
     /// @param settlementPrice Settlement price
-    function saveSettlementPrice(uint256 expiry, uint256 settlementPrice) internal whenNotPaused returns (bool) {
+    function _saveSettlementPrice(uint256 expiry, uint256 settlementPrice) internal whenNotPaused returns (bool) {
         require(expiry < block.timestamp, "Expiry must be in the past");
         require(expiryInfo[expiry].settlementPrice == 0, "Settlement price saved");
         expiryInfo[expiry].settlementPrice = settlementPrice;
@@ -462,11 +444,11 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     }
 
     /// @notice Helper function expire prev epoch
-    function keeperExpirePrevEpochSpreads() public whenNotPaused returns (bool) {
+    function expirePrevEpochSpreads() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         ExpiryInfo memory ei = expiryInfo[prevExpiry];
         uint256 startId = ei.lastProccessedId == 0 ? ei.startId : ei.lastProccessedId;
-        require(expireSpreads(prevExpiry, startId), "keeper failed to expire spreads");
+        require(expireSpreads(prevExpiry, startId), "failed to expire spreads");
         return true;
     }
 
@@ -488,7 +470,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         }
         expiryInfo[expiry].count -= numToProcess;
         expiryInfo[expiry].lastProccessedId = startId;
-        emit KeeperExpireSpreads(expiry, startId, msg.sender);
+        emit ExpireSpreads(expiry, startId, msg.sender);
         return true;
     }
 
