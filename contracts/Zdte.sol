@@ -427,7 +427,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }
 
-    /// @notice Helper function for keeper to save settlement price
+    /// @notice Helper function to save settlement price
     /// @return did settlement price save successfully
     function saveSettlementPrice() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
