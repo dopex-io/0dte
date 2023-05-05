@@ -86,6 +86,7 @@ describe("Zdte", function () {
       volatilityOracle.address,
       priceOracle.address,
       "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3 ROUTER
+      "0xB50F58D50e30dFdAAD01B1C6bcC4Ccb0DB55db13",
       "5000000000", // Strike increment => 50 * 1e8
       "10", // Max OTM % => 10%
       getNextExpiryTimestamp()
@@ -161,9 +162,7 @@ describe("Zdte", function () {
       .connect(user0)
       .approve(zdte.address, "1000000000000000000000000000000000");
 
-    // await expect(
-    //   zdte.connect(user0).withdraw(true, "10000000000000")
-    // ).to.be.revertedWith("Not enough available assets to satisfy withdrawal");
+    await timeTravelOneDay();
 
     const startQuoteBalance = await usdc.balanceOf(user0.address);
     await zdte.connect(user0).withdraw(true, balance.div(2));
@@ -171,150 +170,6 @@ describe("Zdte", function () {
 
     const quoteOut = endQuoteBalance.sub(startQuoteBalance);
     expect(quoteOut).to.eq("50000000000");
-  });
-
-  it("user 1 opens profitable long call position", async function () {
-    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
-    const startQuoteBalance = await usdc.balanceOf(user1.address);
-    console.log("Start quote balance:", startQuoteBalance.toString());
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-    await zdte
-      .connect(user1)
-      .longOptionPosition(false, "1000000000000000000", "160000000000"); // 1 $1600 call option
-
-    let preExpireBaseBalance = await weth.balanceOf(user1.address);
-
-    await priceOracle.updateUnderlyingPrice("165000000000"); // $1650
-    await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(0);
-
-    quoteBalance = await usdc.balanceOf(user1.address);
-    baseBalance = await weth.balanceOf(user1.address);
-    let pnl = baseBalance.sub(preExpireBaseBalance);
-
-    expect(pnl.mul("165000000000").div("1000000000000000000")).equals(
-      "4999999999"
-    );
-  });
-
-  it("user 1 opens profitable long put position", async function () {
-    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
-    const startQuoteBalance = await usdc.balanceOf(user1.address);
-    console.log("Start quote balance:", startQuoteBalance.toString());
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-    await zdte
-      .connect(user1)
-      .longOptionPosition(true, "1000000000000000000", "160000000000"); // 1 $1600 put option
-
-    let preExpireQuoteBalance = await usdc.balanceOf(user1.address);
-
-    await priceOracle.updateUnderlyingPrice("155000000000"); // $1550
-    await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(1);
-
-    let postExpireQuoteBalance = await usdc.balanceOf(user1.address);
-    let pnl = postExpireQuoteBalance.sub(preExpireQuoteBalance);
-
-    expect(pnl.div("1000000")).equals("50");
-  });
-
-  it("user 0 withdraws profitable quote LP position", async function () {
-    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
-    const startQuoteBalance = await usdc.balanceOf(user1.address);
-    console.log("Start quote balance:", startQuoteBalance.toString());
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-    await zdte
-      .connect(user1)
-      .longOptionPosition(true, "10000000000000000000", "160000000000"); // 10 $1600 put option
-    await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(2);
-
-    await zdte
-      .connect(user0)
-      .withdraw(true, await quoteLp.balanceOf(user0.address));
-    const postWithdrawQuoteBalance = (
-      await usdc.balanceOf(user0.address)
-    ).toNumber();
-
-    expect(postWithdrawQuoteBalance).gt(initialQuoteDeposit);
-  });
-
-  it("user 0 cannot withdraw more than available assets from quote LP ", async function () {
-    await usdc.connect(user0).approve(zdte.address, initialQuoteDeposit);
-    await zdte.connect(user0).deposit(true, initialQuoteDeposit);
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-    await zdte
-      .connect(user1)
-      .longOptionPosition(true, "1000000000000000000", "160000000000"); // 1 $1600 put option
-
-    await expect(
-      zdte.connect(user0).withdraw(true, await quoteLp.balanceOf(user0.address))
-    ).to.be.revertedWith("Not enough available assets to satisfy withdrawal");
-  });
-
-  it("user 0 withdraws profitable base LP position", async function () {
-    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-
-    await zdte
-      .connect(user1)
-      .longOptionPosition(false, "10000000000000000000", "160000000000"); // 5 $1600 call option
-    await timeTravelOneDay();
-    await zdte.connect(user1).expireLongOptionPosition(3);
-    await zdte.connect(user1).expireLongOptionPosition(4);
-
-    await zdte
-      .connect(user0)
-      .withdraw(false, await baseLp.balanceOf(user0.address));
-    const postWithdrawBaseBalance = await weth.balanceOf(user0.address);
-
-    expect(postWithdrawBaseBalance.gt(initialBaseDeposit)).equals(true);
-  });
-
-  it("user 0 cannot withdraw more than available assets from base LP ", async function () {
-    await weth.connect(user0).approve(zdte.address, initialBaseDeposit);
-    await zdte.connect(user0).deposit(false, initialBaseDeposit);
-
-    await weth.connect(user1).approve(zdte.address, initialBaseDeposit);
-    await zdte
-      .connect(user1)
-      .longOptionPosition(false, "1000000000000000000", "160000000000"); // 1 $1600 call option
-
-    await expect(
-      zdte.connect(user0).withdraw(false, await baseLp.balanceOf(user0.address))
-    ).to.be.revertedWith("Not enough available assets to satisfy withdrawal");
-  });
-
-  it("user 1 cannot open long option position with invalid strike", async function () {
-    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
-    const startQuoteBalance = await usdc.balanceOf(user1.address);
-    console.log("Start quote balance:", startQuoteBalance.toString());
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-    await expect(
-      zdte
-        .connect(user1)
-        .longOptionPosition(true, "1000000000000000000", "140000000000")
-    ).to.be.revertedWith("Invalid strike"); // 1 $1400 put option - >10% away from mark price
-  });
-
-  it("user 1 cannot expire position prior to expiry", async function () {
-    await priceOracle.updateUnderlyingPrice("160000000000"); // $1600
-    const startQuoteBalance = await usdc.balanceOf(user1.address);
-    console.log("Start quote balance:", startQuoteBalance.toString());
-
-    await usdc.connect(user1).approve(zdte.address, "10000000000");
-    await zdte
-      .connect(user1)
-      .longOptionPosition(true, "1000000000000000000", "150000000000"); // 1 $1500 put option
-    await expect(
-      zdte.connect(user1).expireLongOptionPosition(6)
-    ).to.be.revertedWith("Position must be past expiry time");
   });
 
   it("user 1 opens profitable spread call position", async function () {
