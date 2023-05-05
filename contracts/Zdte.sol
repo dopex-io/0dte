@@ -23,66 +23,56 @@ import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     using SafeERC20 for IERC20Metadata;
 
-    // Base token
+    /// @dev Base token
     IERC20Metadata public base;
-    // Quote token
+    /// @dev Quote token
     IERC20Metadata public quote;
-    // zdte Base LP token
+    /// @dev zdte Base LP token
     ZdteLP public baseLp;
-    // zdte Quotee LP token
+    /// @dev zdte Quotee LP token
     ZdteLP public quoteLp;
-    // Option pricing
+    /// @dev Option pricing
     IOptionPricing public optionPricing;
-    // Volatility oracle
+    /// @dev Volatility oracle
     IVolatilityOracle public volatilityOracle;
-    // Price oracle
+    /// @dev Price oracle
     IPriceOracle public priceOracle;
-    // zdte position minter
+    /// @dev zdte position minter
     ZdtePositionMinter public zdtePositionMinter;
-    // Uniswap V3 router
+    /// @dev Uniswap V3 router
     IUniswapV3Router public uniswapV3Router;
-    // Fee distributor
+    /// @dev Fee distributor
     address public feeDistributor;
- 
-
-    // Fees for opening position
+    /// @dev Fees for opening position
     uint256 public feeOpenPosition = 5000000; // 0.05%
-
+    /// @dev Strike decimals
     uint256 public constant STRIKE_DECIMALS = 1e8;
-
+    /// @dev Convert to USDC decimals
     uint256 internal constant AMOUNT_PRICE_TO_USDC_DECIMALS = (1e18 * 1e8) / 1e6;
-
+    /// @dev Margin decimals
     uint256 public MARGIN_DECIMALS = 100;
-
+    /// @dev Margin of safety to open a spread position
     uint256 public spreadMarginSafety = 300; // 300%
-
+    /// @dev Min volatility to adjust for long strike
     uint256 public minLongStrikeVolAdjust = 5; // 5%
-
+    /// @dev Max volatility to adjust for long strike
     uint256 public maxLongStrikeVolAdjust = 30; // 30%
-
+    /// @dev Max spread positions to expire
     uint256 internal MAX_EXPIRE_BATCH = 30;
-
     /// @dev Expire delay tolerance
     uint256 public expireDelayTolerance = 5 minutes;
-
     /// @dev Strike increments
     uint256 public strikeIncrement;
-
     /// @dev Max OTM % from mark price
     uint256 public maxOtmPercentage;
-
     /// @dev Genesis expiry timestamp, next day 8am gmt
     uint256 public genesisExpiry;
-
     /// @dev base token liquidity
     uint256 public baseLpTokenLiquidity;
-
     /// @dev quote token liquidity
     uint256 public quoteLpTokenLiquidity;
-
     /// @dev open interest amount
     uint256 public openInterestAmount;
-
     /// @dev oracle ID
     bytes32 public oracleId = keccak256("ETH-USD-ZDTE");
 
@@ -93,66 +83,92 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     mapping(uint256 => ExpiryInfo) public expiryInfo;
 
     struct ZdtePosition {
-        // Is position open
+        /// @dev Is position open
         bool isOpen;
-        // Is short
+        /// @dev Is short
         bool isPut;
-        // Is spread
+        /// @dev Is spread
         bool isSpread;
-        // Open position count (in base asset)
+        /// @dev Open position count (in base asset)
         uint256 positions;
-        // Long strike price
+        /// @dev Long strike price
         uint256 longStrike;
-        // Short strike price
+        /// @dev Short strike price
         uint256 shortStrike;
-        // Long premium for position
+        /// @dev Long premium for position
         uint256 longPremium;
-        // Short premium for position
+        /// @dev Short premium for position
         uint256 shortPremium;
-        // Fees for position
+        /// @dev Fees for position
         uint256 fees;
-        // Final PNL of position
+        /// @dev Final PNL of position
         int256 pnl;
-        // Opened at timestamp
+        /// @dev Opened at timestamp
         uint256 openedAt;
-        // Expiry timestamp
+        /// @dev Expiry timestamp
         uint256 expiry;
-        // Margin
+        /// @dev Margin
         uint256 margin;
-        // Mark price at purchase
+        /// @dev Mark price at purchase
         uint256 markPrice;
     }
 
     struct ExpiryInfo {
+        /// @dev Has the epoch begun
         bool begin;
+        /// @dev Time when epoch expires
         uint256 expiry;
+        /// @dev ID of first position of spread for current epoch
         uint256 startId;
+        /// @dev Number of spread positions
         uint256 count;
+        /// @dev Settlement price
         uint256 settlementPrice;
+        /// @dev Last ID settled for the previous batch
         uint256 lastProccessedId;
     }
 
-    // Deposit event
+    /// @dev Deposit event
+    /// @param isQuote isQuote
+    /// @param amount amount
+    /// @param sender sender
     event Deposit(bool isQuote, uint256 amount, address indexed sender);
 
-    // Withdraw event
+    /// @dev Withdraw event
+    /// @param isQuote isQuote
+    /// @param amount amount
+    /// @param sender sender
     event Withdraw(bool isQuote, uint256 amount, address indexed sender);
 
-    // Spread option position event
+    /// @dev Spread option position event
+    /// @param id id
+    /// @param amount amount
+    /// @param longStrike longStrike
+    /// @param shortStrike shortStrike
+    /// @param user user
     event SpreadOptionPosition(
         uint256 id, uint256 amount, uint256 longStrike, uint256 shortStrike, address indexed user
     );
 
-    // Expire spread position event
+    /// @dev Expire spread position event
+    /// @param id id
+    /// @param pnl pnl
+    /// @param user user
     event SpreadOptionPositionExpired(uint256 id, uint256 pnl, address indexed user);
 
-    // Expire long option position event
+    /// @dev Expire long option position event
+    /// @param expiry expiry
+    /// @param lastId lastId
+    /// @param user user
     event ExpireSpreads(uint256 expiry, uint256 lastId, address indexed user);
 
-    // Set settlement price event
+    /// @dev Set settlement price event
+    /// @param expiry expiry
+    /// @param settlementPrice settlementPrice
     event SettlementPriceSaved(uint256 expiry, uint256 settlementPrice);
 
-    // Set delay tolerance
+    /// @dev Set delay tolerance
+    /// @param delay delay
     event ExpireDelayToleranceUpdate(uint256 delay);
 
     constructor(
@@ -411,9 +427,8 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         emit SpreadOptionPositionExpired(id, pnl, msg.sender);
     }
 
-
-
     /// @notice Helper function for keeper to save settlement price
+    /// @return did settlement price save successfully
     function saveSettlementPrice() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         require(block.timestamp < prevExpiry + expireDelayTolerance, "Expiry is past tolerance");
@@ -421,7 +436,12 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         return true;
     }
 
-    /// @notice Helper function for admin to save settlement price
+    /**
+     * @notice Helper function for admin to save settlement price
+     * @param expiry Expiry to set settlement price
+     * @param settlementPrice Settlement price
+     * @return did settlement price save successfully
+     */
     function saveSettlementPrice(uint256 expiry, uint256 settlementPrice)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -432,9 +452,12 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         return true;
     }
 
-    /// @notice Helper function set settlement price at expiry
-    /// @param expiry Expiry to set settlement price
-    /// @param settlementPrice Settlement price
+    /**
+     * @notice Helper function set settlement price at expiry
+     * @param expiry Expiry to set settlement price
+     * @param settlementPrice Settlement price
+     * @return did settlement price save successfully
+     */
     function _saveSettlementPrice(uint256 expiry, uint256 settlementPrice) internal whenNotPaused returns (bool) {
         require(expiry < block.timestamp, "Expiry must be in the past");
         require(expiryInfo[expiry].settlementPrice == 0, "Settlement price saved");
@@ -444,6 +467,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     }
 
     /// @notice Helper function expire prev epoch
+    /// @return did prev epoch expire successfully
     function expirePrevEpochSpreads() public whenNotPaused returns (bool) {
         uint256 prevExpiry = getPrevExpiry();
         ExpiryInfo memory ei = expiryInfo[prevExpiry];
@@ -452,8 +476,12 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         return true;
     }
 
-    /// @notice Helper function expire prev epoch
-    /// @param expiry Expiry to expire
+    /**
+     * @notice Helper function expire prev epoch
+     * @param expiry Expiry to set settlement price
+     * @param startId First ID to expire
+     * @return did spreads expire successfully
+     */
     function expireSpreads(uint256 expiry, uint256 startId) public whenNotPaused returns (bool) {
         require(expiryInfo[expiry].settlementPrice != 0, "Settlement price not saved");
         ExpiryInfo memory info = expiryInfo[expiry];
@@ -488,24 +516,33 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         }
     }
 
-    /// @notice External function to return the volatility
-    /// @param strike Strike of option
+    /**
+     * @notice External function to return the volatility
+     * @param strike Strike of option
+     * @return volatility
+     */
     function getVolatility(uint256 strike) public view returns (uint256 volatility) {
         volatility = uint256(volatilityOracle.getVolatility(oracleId, getCurrentExpiry(), strike));
     }
 
-    /// @notice External function to return the volatility
-    /// @param strike Strike of option
-    /// @param expiry Expiry of option
+    /**
+     * @notice External function to return the volatility
+     * @param strike Strike of option
+     * @param expiry Expiry of option
+     * @return volatility
+     */
     function getVolatilityWithExpiry(uint256 strike, uint256 expiry) public view returns (uint256 volatility) {
         volatility = uint256(volatilityOracle.getVolatility(oracleId, expiry, strike));
     }
 
-    /// @notice External function to validate spread position
-    /// @param isPut is put spread
-    /// @param amount Amount of options to long // 1e18
-    /// @param longStrike Long Strike price // 1e8
-    /// @param shortStrike Short Strike price // 1e8
+    /**
+     * @notice External function to validate spread position
+     * @param isPut is put spread
+     * @param amount Amount of options to long // 1e18
+     * @param longStrike Long Strike price // 1e8
+     * @param shortStrike Short Strike price // 1e8
+     * @return is condition valid to open spread
+     */
     function canOpenSpreadPosition(bool isPut, uint256 amount, uint256 longStrike, uint256 shortStrike)
         external
         view
@@ -515,10 +552,13 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         return isPut ? quoteLp.totalAvailableAssets() >= margin : baseLp.totalAvailableAssets() >= margin;
     }
 
-    /// @notice Public function to calculate premium in quote
-    /// @param isPut if calc premium for put
-    /// @param strike Strike of option
-    /// @param amount Amount of option
+    /**
+     * @notice Public function to calculate premium in quote
+     * @param isPut if calc premium for put
+     * @param strike Strike of option
+     * @param amount Amount of option
+     * @return premium
+     */
     function calcPremium(
         bool isPut,
         uint256 strike, // 1e8
@@ -532,11 +572,14 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         premium = premium / AMOUNT_PRICE_TO_USDC_DECIMALS;
     }
 
-    /// @notice Public function to calculate premium in quote
-    /// @param isPut if calc premium for put
-    /// @param strike Strike of option
-    /// @param volatility Vol
-    /// @param amount Amount of option
+    /**
+     * @notice Public function to calculate premium in quote
+     * @param isPut if calc premium for put
+     * @param strike Strike of option
+     * @param volatility Vol
+     * @param amount Amount of option
+     * @return premium
+     */
     function calcPremiumWithVol(
         bool isPut,
         uint256 markPrice,
@@ -550,10 +593,13 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         premium = premium / AMOUNT_PRICE_TO_USDC_DECIMALS;
     }
 
-    /// @notice Public function to calculate premium in quote
-    /// @param isPut if calc premium for put
-    /// @param strike Strike of option
-    /// @param amount Amount of option
+    /**
+     * @notice Public function to calculate premium in quote
+     * @param isPut if calc premium for put
+     * @param strike Strike of option
+     * @param amount Amount of option
+     * @return premium
+     */
     function calcPremiumCustom(
         bool isPut,
         uint256 strike, // 1e8
@@ -575,9 +621,12 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         premium = calcPremiumWithVol(isPut, getMarkPrice(), strike, vol, amount);
     }
 
-    /// @notice Internal function to calculate premium in quote
-    /// @param strike Strike of option
-    /// @param amount Amount of option
+    /**
+     * @notice Internal function to calculate premium in quote
+     * @param strike Strike of option
+     * @param amount Amount of option
+     * @return premium
+     */
     function calcOpeningFees(
         uint256 strike, // 1e8
         uint256 amount // 1e18
@@ -585,31 +634,41 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         return calcFees((amount * strike) / AMOUNT_PRICE_TO_USDC_DECIMALS);
     }
 
-    /// @notice Internal function to calculate margin for a spread option position
-    /// @param id ID of position
+    /**
+     * @notice Internal function to calculate margin for a spread option position
+     * @param id ID of position
+     * @return margin
+     */
     function calcMargin(uint256 id) internal view returns (uint256 margin) {
         ZdtePosition memory position = zdtePositions[id];
         margin = calcMargin(position.isPut, position.longStrike, position.shortStrike);
     }
 
-    /// @notice Internal function to calculate margin for a spread option position
-    /// @param isPut is put option
-    /// @param longStrike Long strike price
-    /// @param shortStrike Short strike price
+    /**
+     * @notice Internal function to calculate margin for a spread option position
+     * @param isPut is put option
+     * @param longStrike Long strike price
+     * @param shortStrike Short strike price
+     */
     function calcMargin(bool isPut, uint256 longStrike, uint256 shortStrike) public view returns (uint256 margin) {
         margin = (isPut ? (longStrike - shortStrike) / 100 : ((shortStrike - longStrike) * 1 ether) / shortStrike);
         margin = (margin * spreadMarginSafety) / MARGIN_DECIMALS;
     }
 
-    /// @notice Internal function to calculate fees
-    /// @param amount Value of option in USD (ie6)
+    /**
+     * @notice Internal function to calculate fees
+     *  @param amount Value of option in USD (ie6)
+     *  @return fees
+     */
     function calcFees(uint256 amount) public view returns (uint256 fees) {
         fees = (amount * feeOpenPosition) / (100 * STRIKE_DECIMALS);
     }
 
-    /// @notice Internal function to calculate pnl
-    /// @param id ID of position
-    /// @return pnl PNL in quote asset i.e USD (1e6)
+    /**
+     * @notice Internal function to calculate pnl
+     * @param id ID of position
+     * @return pnl PNL in quote asset i.e USD (1e6)
+     */
     function calcPnl(uint256 id) public view returns (uint256 pnl) {
         ZdtePosition memory zp = zdtePositions[id];
         uint256 markPrice = zp.expiry < block.timestamp ? expiryInfo[zp.expiry].settlementPrice : getMarkPrice();
@@ -663,12 +722,13 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     }
 
     /// @notice Public function to retrieve price of base asset from oracle
-    /// @param price Mark price
+    /// @return price
     function getMarkPrice() public view returns (uint256 price) {
         price = uint256(priceOracle.getUnderlyingPrice());
     }
 
     /// @notice Public function to return the next expiry timestamp
+    /// @return expiry
     function getCurrentExpiry() public view returns (uint256 expiry) {
         if (block.timestamp > genesisExpiry) {
             expiry = genesisExpiry + ((((block.timestamp - genesisExpiry) / 1 days) + 1) * 1 days);
@@ -678,6 +738,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     }
 
     /// @notice Public function to return the prev expiry timestamp
+    /// @return expiry
     function getPrevExpiry() public view returns (uint256 expiry) {
         if (getCurrentExpiry() == genesisExpiry) {
             expiry = 0;

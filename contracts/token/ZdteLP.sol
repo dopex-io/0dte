@@ -55,6 +55,12 @@ contract ZdteLP is ERC4626 {
         symbol = string.concat(_collateralSymbol, "-LP");
     }
 
+    /**
+     * @notice deposit into ERC4626 token
+     * @param assets assets
+     * @param receiver receiver
+     * @return shares shares of LP tokens minted
+     */
     function deposit(uint256 assets, address receiver) public virtual override returns (uint256 shares) {
         // Check for rounding error since we round down in previewDeposit.
         require((shares = previewDeposit(assets)) != 0, "ZERO_SHARES");
@@ -71,11 +77,18 @@ contract ZdteLP is ERC4626 {
         afterDeposit(assets, shares);
     }
 
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner
-    ) public virtual override returns (uint256 shares) {
+    /**
+     * @notice withdraw from ERC4626 token
+     * @param assets assets
+     * @param receiver receiver
+     * @return shares shares of LP tokens
+     */
+    function withdraw(uint256 assets, address receiver, address owner)
+        public
+        virtual
+        override
+        returns (uint256 shares)
+    {
         require(lockedUsers[owner] <= block.timestamp, "Cooling period");
 
         shares = previewWithdraw(assets); // No need to check for rounding error, previewWithdraw rounds up.
@@ -95,11 +108,14 @@ contract ZdteLP is ERC4626 {
         asset.safeTransfer(receiver, assets);
     }
 
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner
-    ) public virtual override returns (uint256 assets) {
+    /**
+     * @notice redeem ERC4626 token
+     * @param shares shares
+     * @param receiver receiver
+     * @param owner owner
+     * @return assets native tokens to be received
+     */
+    function redeem(uint256 shares, address receiver, address owner) public virtual override returns (uint256 assets) {
         require(lockedUsers[owner] <= block.timestamp, "Cooling period");
 
         if (msg.sender != owner) {
