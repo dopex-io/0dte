@@ -24,7 +24,8 @@ contract DeployScript is Script {
             _feeDistributor: vm.envAddress("FEE_DISTRIBUTOR"),
             _strikeIncrement: vm.envUint("STRIKE_INCREMENT"),
             _maxOtmPercentage: vm.envUint("OTM_PCT"),
-            _genesisExpiry: vm.envUint("EXPIRY")
+            _genesisExpiry: vm.envUint("EXPIRY"),
+            _oracleId: vm.envString("ORACLE_ID")
         });
         vm.label(address(zdte), "zdte");
 

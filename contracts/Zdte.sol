@@ -74,7 +74,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     /// @dev open interest amount
     uint256 public openInterestAmount;
     /// @dev oracle ID
-    bytes32 public oracleId = keccak256("ETH-USD-ZDTE");
+    bytes32 public oracleId;
 
     /// @dev zdte positions
     mapping(uint256 => ZdtePosition) public zdtePositions;
@@ -181,7 +181,8 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         address _feeDistributor,
         uint256 _strikeIncrement,
         uint256 _maxOtmPercentage,
-        uint256 _genesisExpiry
+        uint256 _genesisExpiry,
+        string memory _oracleId
     ) {
         require(_base != address(0), "Invalid base token");
         require(_quote != address(0), "Invalid quote token");
@@ -206,6 +207,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
         strikeIncrement = _strikeIncrement;
         maxOtmPercentage = _maxOtmPercentage;
         genesisExpiry = _genesisExpiry;
+        oracleId = keccak256(abi.encodePacked(_oracleId));
 
         zdtePositionMinter = new ZdtePositionMinter();
 
@@ -780,8 +782,8 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
 
     /// @notice update oracleId
     /// @param _oracleId Oracle Id
-    function updateOracleId(bytes32 _oracleId) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        oracleId = _oracleId;
+    function updateOracleId(string memory _oracleId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        oracleId = keccak256(abi.encodePacked(_oracleId));
     }
 
     /// @notice Pauses the vault for emergency cases

@@ -24,7 +24,8 @@ contract FakeDeployScript is Script {
           0x9d16d832dD97eD9684DaE9CD30234bB7028EBfDf,
           50e8,
           10,
-          0
+          0,
+          "FAKE"
         );
         vm.label(address(zdte), "zdte");
 
