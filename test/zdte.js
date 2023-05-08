@@ -89,7 +89,8 @@ describe("Zdte", function () {
       "0xB50F58D50e30dFdAAD01B1C6bcC4Ccb0DB55db13",
       "5000000000", // Strike increment => 50 * 1e8
       "10", // Max OTM % => 10%
-      getNextExpiryTimestamp()
+      getNextExpiryTimestamp(),
+      "ETH-USD-ZDTE"
     );
 
     console.log("deployed Zdte:", zdte.address);

@@ -73,7 +73,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     uint256 public quoteLpTokenLiquidity;
     /// @dev open interest amount
     uint256 public openInterestAmount;
-    /// @dev oracle ID
+    /// @dev oracle ID, ARB-USD-ZDTE
     bytes32 public oracleId;
 
     /// @dev zdte positions
