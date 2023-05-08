@@ -3,7 +3,15 @@
 source .secrets
 # source .fake_secrets
 
-forge script script/Deploy.s.sol:DeployScript \
+# forge script script/DeployEth.s.sol:DeployEthScript \
+#   --fork-url $REAL_ARB_RPC_URL  \
+#   --private-key $REAL_ADMIN_PK \
+#   --broadcast \
+#   --verify \
+#   --verifier-url $REAL_VERIFIER_URL \
+#   --etherscan-api-key $ETHERSCAN_API_KEY
+
+forge script script/DeployArb.s.sol:DeployArbScript \
   --fork-url $REAL_ARB_RPC_URL  \
   --private-key $REAL_ADMIN_PK \
   --broadcast \

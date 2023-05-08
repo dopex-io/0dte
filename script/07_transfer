@@ -10,6 +10,12 @@ cast send $ZDTE \
   "transferOwnership(address)" \
   $MASTER
 
+cast send $ZDTE_ARB \
+  --rpc-url $REAL_ARB_RPC_URL \
+  --private-key $REAL_ADMIN_PK \
+  "transferOwnership(address)" \
+  $MASTER
+
 # cast send $ZDTE \
 #   --rpc-url $REAL_ARB_RPC_URL \
 #   --private-key $REAL_ADMIN_PK \
