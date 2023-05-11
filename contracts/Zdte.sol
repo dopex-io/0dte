@@ -418,10 +418,12 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
 
                 quote.transfer(IERC721(zdtePositionMinter).ownerOf(id), quotePnL);
             }
-        } else if (zdtePositions[id].isPut) {
-            quoteLp.unlockLiquidity(margin);
         } else {
-            baseLp.unlockLiquidity(margin);
+            if (zdtePositions[id].isPut) {
+                quoteLp.unlockLiquidity(margin);
+            } else {
+                baseLp.unlockLiquidity(margin);
+            }
         }
 
         openInterestAmount -= zdtePositions[id].positions;
