@@ -393,7 +393,7 @@ contract Zdte is ReentrancyGuard, AccessControl, Pausable, ContractWhitelist {
     function expireSpreadOptionPosition(uint256 id) internal whenNotPaused nonReentrant isEligibleSender {
         require(zdtePositions[id].isOpen, "Invalid position ID");
         require(zdtePositions[id].isSpread, "Must be a spread option position");
-        require(expiryInfo[getCurrentExpiry()].settlementPrice != 0, "Settlement price not saved");
+        require(expiryInfo[getPrevExpiry()].settlementPrice != 0, "Settlement price not saved");
         require(zdtePositions[id].expiry <= block.timestamp, "Position must be past expiry time");
 
         uint256 pnl = calcPnl(id);
